@@ -1,9 +1,0 @@
-SATpass running on http://localhost:3000
-[AUDIT] 2026-09-10T16:38:59.281Z koordynator PASSWORD_LIST - Listed 1 passwords
-[AUDIT] 2026-09-10T16:38:59.289Z aweeri PASSWORD_LIST - Listed 2 passwords
-[AUDIT] 2026-09-10T16:38:59.300Z aweeri PASSWORD_LIST - Listed 2 passwords
-[AUDIT] 2026-09-10T16:38:59.313Z aweeri PASSWORD_CREATE 18 Created password "probe-tmp" in group "Zarząd"
-[AUDIT] 2026-09-10T16:38:59.316Z aweeri PASSWORD_READ 18 Decrypted password "probe-tmp" from group "Zarząd"
-[AUDIT] 2026-09-10T16:38:59.321Z aweeri PASSWORD_DELETE 18 Deleted password "probe-tmp" from group "Zarząd"
-[AUDIT] 2026-09-10T16:38:59.326Z aweeri PASSWORD_CREATE 19 Created password "untrusted" in group "Zarząd"
-[AUDIT] 2026-09-10T16:38:59.331Z aweeri PASSWORD_CREATE 20 Created password "<script>alert(1)</script>" in group "Zarząd"
