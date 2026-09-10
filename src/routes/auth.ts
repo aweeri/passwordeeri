@@ -2,7 +2,11 @@ import { randomBytes } from "node:crypto";
 import { authenticate, AuthError, getGroupsForUser } from "../ldap";
 import { createSession, deleteSession, refreshSessionGroups, logAudit } from "../db";
 import { getConfig } from "../config";
+import { jsonResponse } from "../response";
 import type { RequestContext } from "../middleware";
+
+// Login payloads are tiny (username + password) — 16KB is generous.
+const MAX_LOGIN_BODY_BYTES = 16 * 1024;
 
 const APP_NAME = () => getConfig().APP_NAME;
 
@@ -112,10 +116,7 @@ export function getLoginPage(_ctx: RequestContext): Response {
 export async function handleLogin(ctx: RequestContext): Promise<Response> {
   const ip = getClientIP(ctx);
   if (!checkRateLimit(ip)) {
-    return new Response(JSON.stringify({ error: "Too many login attempts. Try again later." }), {
-      status: 429,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Too many login attempts. Try again later." }, 429);
   }
 
   // Delay to slow brute-force even within rate limit window
@@ -123,20 +124,18 @@ export async function handleLogin(ctx: RequestContext): Promise<Response> {
 
   let body: { username?: string; password?: string };
   try {
-    body = await ctx.request.json();
+    const text = await ctx.request.text();
+    if (text.length > MAX_LOGIN_BODY_BYTES) {
+      return jsonResponse({ error: "Request body too large" }, 413);
+    }
+    body = JSON.parse(text);
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid request" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Invalid request" }, 400);
   }
 
   const { username, password } = body;
   if (!username || !password) {
-    return new Response(JSON.stringify({ error: "Username and password are required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Username and password are required" }, 400);
   }
 
   try {
@@ -152,20 +151,13 @@ export async function handleLogin(ctx: RequestContext): Promise<Response> {
 
     logAudit(result.username, "login", null, "Login successful");
 
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Set-Cookie": `session=${token}; HttpOnly; SameSite=Strict; Path=${cookiePath}; Max-Age=${maxAge}${secure}`,
-      },
+    return jsonResponse({ ok: true }, 200, {
+      "Set-Cookie": `session=${token}; HttpOnly; SameSite=Strict; Path=${cookiePath}; Max-Age=${maxAge}${secure}`,
     });
   } catch (err) {
     // AuthError always has the same generic message — no username enumeration
     const message = err instanceof AuthError ? err.message : "Invalid username or password";
-    return new Response(JSON.stringify({ error: message }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: message }, 401);
   }
 }
 

@@ -7,6 +7,9 @@ RUN bun install --production --no-cache
 # Stage 2: Runtime
 FROM oven/bun:1-alpine
 WORKDIR /app
+# Production mode: disables Bun's dev error overlay (which leaks cwd, paths,
+# and stack frames) and enables other production behaviors.
+ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src/ src/

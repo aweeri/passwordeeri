@@ -1,6 +1,11 @@
 import { listPasswordsForGroups, listAllPasswords, getPasswordById, createPassword, updatePassword, deletePassword, logAudit, getDb } from "../db";
 import { encrypt, decrypt } from "../crypto";
 import type { RequestContext } from "../middleware";
+import { jsonResponse } from "../response";
+
+// Max accepted JSON request body — password values are capped at 10k chars
+// plus a little for the other fields, so 64KB is generous headroom.
+const MAX_BODY_BYTES = 64 * 1024;
 
 const MAX_TITLE = 200;
 const MAX_USERNAME = 200;
@@ -69,6 +74,24 @@ function sanitizeUrl(url: string): string {
   }
 }
 
+// Enforce a cap on the request body before buffering/parsing it, so a huge
+// payload can't make the server spend unbounded time/memory on JSON.parse.
+async function readJsonBody(ctx: RequestContext): Promise<any> {
+  const contentLength = Number(ctx.request.headers.get("Content-Length") || "0");
+  if (contentLength > MAX_BODY_BYTES) {
+    const err: any = new Error("Request body too large");
+    err.status = 413;
+    throw err;
+  }
+  const text = await ctx.request.text();
+  if (text.length > MAX_BODY_BYTES) {
+    const err: any = new Error("Request body too large");
+    err.status = 413;
+    throw err;
+  }
+  return JSON.parse(text);
+}
+
 // ── Audit logging (console + DB) ──
 
 function auditLog(username: string, action: string, resourceId: number | null, detail: string): void {
@@ -86,9 +109,8 @@ function stripCtrl(s: string): string {
 export function listPasswordsJson(ctx: RequestContext): Response {
   const rateCheck = checkCrudRateLimit(ctx, 60);
   if (!rateCheck.allowed) {
-    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
-      status: 429,
-      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    return jsonResponse({ error: "Too many requests. Try again later." }, 429, {
+      "Retry-After": String(rateCheck.retryAfter),
     });
   }
 
@@ -108,112 +130,79 @@ export function listPasswordsJson(ctx: RequestContext): Response {
 
   auditLog(ctx.username, "PASSWORD_LIST", null, `Listed ${result.length} passwords`);
 
-  return new Response(JSON.stringify(result), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return jsonResponse(result);
 }
 
 export function decryptPasswordJson(ctx: RequestContext): Response {
   const rateCheck = checkCrudRateLimit(ctx, 60);
   if (!rateCheck.allowed) {
-    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
-      status: 429,
-      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    return jsonResponse({ error: "Too many requests. Try again later." }, 429, {
+      "Retry-After": String(rateCheck.retryAfter),
     });
   }
 
   const id = Number(ctx.params.id);
   if (Number.isNaN(id)) {
-    return new Response(JSON.stringify({ error: "Invalid ID" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Invalid ID" }, 400);
   }
 
   const entry = getPasswordById(id);
   if (!entry) {
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Not found" }, 404);
   }
 
   // Group authorization: super users can access any entry
   if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
-    return new Response(JSON.stringify({ error: "You do not have access to this entry" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "You do not have access to this entry" }, 403);
   }
 
   const password = decrypt({ data: entry.enc_password, iv: entry.enc_iv, tag: entry.enc_tag }, String(entry.id));
 
   auditLog(ctx.username, "PASSWORD_READ", id, `Decrypted password "${entry.title}" from group "${entry.group_cn}"`);
 
-  return new Response(JSON.stringify({ id: entry.id, password }), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return jsonResponse({ id: entry.id, password });
 }
 
 export async function createPasswordJson(ctx: RequestContext): Promise<Response> {
   const rateCheck = checkCrudRateLimit(ctx, 20);
   if (!rateCheck.allowed) {
-    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
-      status: 429,
-      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    return jsonResponse({ error: "Too many requests. Try again later." }, 429, {
+      "Retry-After": String(rateCheck.retryAfter),
     });
   }
 
   let body: any;
   try {
-    body = await ctx.request.json();
-  } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    body = await readJsonBody(ctx);
+  } catch (err: any) {
+    if (err?.status === 413) {
+      return jsonResponse({ error: "Request body too large" }, 413);
+    }
+    return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
   const { title, username, url, password, group_cn } = body;
   if (!title || !username || !password || !group_cn) {
-    return new Response(JSON.stringify({ error: "title, username, password, and group_cn are required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "title, username, password, and group_cn are required" }, 400);
   }
 
   // Server-side length validation
   if (title.length > MAX_TITLE) {
-    return new Response(JSON.stringify({ error: `title must be at most ${MAX_TITLE} characters` }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `title must be at most ${MAX_TITLE} characters` }, 400);
   }
   if (username.length > MAX_USERNAME) {
-    return new Response(JSON.stringify({ error: `username must be at most ${MAX_USERNAME} characters` }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `username must be at most ${MAX_USERNAME} characters` }, 400);
   }
   if ((url || "").length > MAX_URL) {
-    return new Response(JSON.stringify({ error: `url must be at most ${MAX_URL} characters` }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `url must be at most ${MAX_URL} characters` }, 400);
   }
   if (password.length > MAX_PASSWORD) {
-    return new Response(JSON.stringify({ error: `password must be at most ${MAX_PASSWORD} characters` }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `password must be at most ${MAX_PASSWORD} characters` }, 400);
   }
 
   // Group authorization: user must belong to the group they're creating for
   if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
-    return new Response(JSON.stringify({ error: "You do not have access to this group" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "You do not have access to this group" }, 403);
   }
 
   const cleanedTitle = stripCtrl(title.trim());
@@ -240,133 +229,94 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
 
   auditLog(ctx.username, "PASSWORD_CREATE", entry.id, `Created password "${cleanedTitle}" in group "${group_cn}"`);
 
-  return new Response(JSON.stringify({ id: entry.id, title: entry.title, group_cn: entry.group_cn }), {
-    status: 201,
-    headers: { "Content-Type": "application/json" },
-  });
+  return jsonResponse({ id: entry.id, title: entry.title, group_cn: entry.group_cn }, 201);
 }
 
 export function deletePasswordJson(ctx: RequestContext): Response {
   const rateCheck = checkCrudRateLimit(ctx, 20);
   if (!rateCheck.allowed) {
-    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
-      status: 429,
-      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    return jsonResponse({ error: "Too many requests. Try again later." }, 429, {
+      "Retry-After": String(rateCheck.retryAfter),
     });
   }
 
   const id = Number(ctx.params.id);
   if (Number.isNaN(id)) {
-    return new Response(JSON.stringify({ error: "Invalid ID" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Invalid ID" }, 400);
   }
 
   const entry = getPasswordById(id);
   if (!entry) {
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Not found" }, 404);
   }
 
   // Group authorization: super users can delete any entry
   if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
-    return new Response(JSON.stringify({ error: "You do not have access to this entry" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "You do not have access to this entry" }, 403);
   }
 
   deletePassword(id);
 
   auditLog(ctx.username, "PASSWORD_DELETE", id, `Deleted password "${entry.title}" from group "${entry.group_cn}"`);
 
-  return new Response(JSON.stringify({ ok: true }), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return jsonResponse({ ok: true });
 }
 
 export async function updatePasswordJson(ctx: RequestContext): Promise<Response> {
   const rateCheck = checkCrudRateLimit(ctx, 20);
   if (!rateCheck.allowed) {
-    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
-      status: 429,
-      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    return jsonResponse({ error: "Too many requests. Try again later." }, 429, {
+      "Retry-After": String(rateCheck.retryAfter),
     });
   }
 
   const id = Number(ctx.params.id);
   if (Number.isNaN(id)) {
-    return new Response(JSON.stringify({ error: "Invalid ID" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Invalid ID" }, 400);
   }
 
   const entry = getPasswordById(id);
   if (!entry) {
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Not found" }, 404);
   }
 
   // Group authorization: super users can update any entry
   if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
-    return new Response(JSON.stringify({ error: "You do not have access to this entry" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "You do not have access to this entry" }, 403);
   }
 
   let body: any;
   try {
-    body = await ctx.request.json();
-  } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    body = await readJsonBody(ctx);
+  } catch (err: any) {
+    if (err?.status === 413) {
+      return jsonResponse({ error: "Request body too large" }, 413);
+    }
+    return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
   const { title, username, url, password, group_cn } = body;
   if (!title || !username || !group_cn) {
-    return new Response(JSON.stringify({ error: "title, username, and group_cn are required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "title, username, and group_cn are required" }, 400);
   }
 
   // Server-side length validation
   if (title.length > MAX_TITLE) {
-    return new Response(JSON.stringify({ error: `title must be at most ${MAX_TITLE} characters` }), {
-      status: 400, headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `title must be at most ${MAX_TITLE} characters` }, 400);
   }
   if (username.length > MAX_USERNAME) {
-    return new Response(JSON.stringify({ error: `username must be at most ${MAX_USERNAME} characters` }), {
-      status: 400, headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `username must be at most ${MAX_USERNAME} characters` }, 400);
   }
   if ((url || "").length > MAX_URL) {
-    return new Response(JSON.stringify({ error: `url must be at most ${MAX_URL} characters` }), {
-      status: 400, headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `url must be at most ${MAX_URL} characters` }, 400);
   }
   if (password && password.length > MAX_PASSWORD) {
-    return new Response(JSON.stringify({ error: `password must be at most ${MAX_PASSWORD} characters` }), {
-      status: 400, headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `password must be at most ${MAX_PASSWORD} characters` }, 400);
   }
 
   // Group authorization: super users can write to any group
   if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
-    return new Response(JSON.stringify({ error: "You do not have access to this group" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "You do not have access to this group" }, 403);
   }
 
   const cleanedTitle = stripCtrl(title.trim());
@@ -395,15 +345,10 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
   });
 
   if (!updated) {
-    return new Response(JSON.stringify({ error: "Update failed" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Update failed" }, 500);
   }
 
   auditLog(ctx.username, "PASSWORD_UPDATE", id, `Updated password "${cleanedTitle}" in group "${group_cn}"`);
 
-  return new Response(JSON.stringify({ id: updated.id, title: updated.title, group_cn: updated.group_cn }), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return jsonResponse({ id: updated.id, title: updated.title, group_cn: updated.group_cn });
 }

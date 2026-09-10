@@ -68,7 +68,14 @@ export class Router {
 
       const params: Record<string, string> = {};
       for (let i = 0; i < route.paramNames.length; i++) {
-        params[route.paramNames[i]] = decodeURIComponent(match[i + 1]);
+        try {
+          params[route.paramNames[i]] = decodeURIComponent(match[i + 1]);
+        } catch {
+          // Malformed percent-encoding in a path parameter (e.g. "%zz").
+          // Never let a decoding error bubble up to the error page — treat
+          // the request as simply not matching any route.
+          return null;
+        }
       }
 
       const ctx: RequestContext = { request, params, userGroups: [], username: "", server };

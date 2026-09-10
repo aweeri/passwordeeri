@@ -2,6 +2,7 @@ import { getSession, parseGroups, type SessionRow } from "./db";
 import { getConfig } from "./config";
 import { getGroupsForUser } from "./ldap";
 import { deleteSession, refreshSessionGroups } from "./db";
+import { jsonResponse } from "./response";
 
 export interface RequestContext {
   request: Request;
@@ -57,16 +58,10 @@ function csrfGuard(handler: Handler): Handler {
     if (method === "POST" || method === "DELETE" || method === "PUT" || method === "PATCH") {
       const contentType = ctx.request.headers.get("Content-Type") || "";
       if (!contentType.includes("application/json")) {
-        return new Response(JSON.stringify({ error: "Content-Type must be application/json" }), {
-          status: 415,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonResponse({ error: "Content-Type must be application/json" }, 415);
       }
       if (!isSameOrigin(ctx.request)) {
-        return new Response(JSON.stringify({ error: "Cross-origin request rejected" }), {
-          status: 403,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonResponse({ error: "Cross-origin request rejected" }, 403);
       }
     }
     return handler(ctx);
@@ -111,8 +106,23 @@ function resolveSession(ctx: RequestContext): { token: string } | null {
   return { token };
 }
 
+// Raw Set-Cookie value that clears the session cookie, honoring the configured
+// path and Secure flag. Used on redirects/401s after a dead/expired session so
+// stale tokens don't linger in the browser.
+function clearSessionCookieValue(): string {
+  const cfg = getConfig();
+  const secure = cfg.COOKIE_SECURE ? "; Secure" : "";
+  const cookiePath = cfg.BASE_PATH || "/";
+  return `session=; HttpOnly; SameSite=Strict; Path=${cookiePath}; Max-Age=0${secure}`;
+}
+
+function clearSessionCookieHeaders(): Record<string, string> {
+  return { "Set-Cookie": clearSessionCookieValue() };
+}
+
 /**
- * Require a valid session. If missing, redirect to /login.
+ * Require a valid session. If missing, redirect to /login (and clear a dead
+ * session cookie if one was presented).
  */
 export function requireSession(handler: Handler): Handler {
   return (ctx: RequestContext) => {
@@ -123,7 +133,8 @@ export function requireSession(handler: Handler): Handler {
     }
     const session = getSession(resolved.token);
     if (!session) {
-      return new Response(null, { status: 302, headers: { Location: loginPath } });
+      // Present but invalid/expired — clear it so the client stops sending a dead token.
+      return new Response(null, { status: 302, headers: { Location: loginPath, ...clearSessionCookieHeaders() } });
     }
     ctx.session = session;
     ctx.userGroups = parseGroups(session);
@@ -146,17 +157,15 @@ export function requireSessionJson(handler: Handler): Handler {
   return csrfGuard((ctx: RequestContext) => {
     const resolved = resolveSession(ctx);
     if (!resolved) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Unauthorized" }, 401);
     }
     const session = getSession(resolved.token);
     if (!session) {
-      return new Response(JSON.stringify({ error: "Session expired" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
+      // Invalid/expired — clear the dead cookie so the client stops sending it.
+      const headers = {
+        "Set-Cookie": clearSessionCookieValue(),
+      };
+      return jsonResponse({ error: "Session expired" }, 401, headers);
     }
     ctx.session = session;
     ctx.userGroups = parseGroups(session);

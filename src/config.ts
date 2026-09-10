@@ -2,7 +2,6 @@ export interface Config {
   APP_NAME: string;
   PORT: number;
   BASE_PATH: string;
-  SESSION_SECRET: string;
   MASTER_KEY: string;
   COOKIE_SECURE: boolean;
   SESSION_TTL_HOURS: number;
@@ -62,18 +61,11 @@ export function loadConfig(): Config {
     process.exit(1);
   }
 
-  const sessionSecret = env("SESSION_SECRET");
-  if (sessionSecret.length < 16) {
-    console.error("SESSION_SECRET must be at least 16 characters");
-    process.exit(1);
-  }
-
   config = {
     APP_NAME: envOpt("APP_NAME", "passwordeeri"),
     PORT: envNum("PORT", 3000),
     // URL subpath the app is served under, e.g. "/passwords". Empty = root.
     BASE_PATH: normalizeBasePath(envOpt("BASE_PATH", "")),
-    SESSION_SECRET: sessionSecret,
     MASTER_KEY: masterKey,
     COOKIE_SECURE: envBool("COOKIE_SECURE", false),
     SESSION_TTL_HOURS: envNum("SESSION_TTL_HOURS", 8),

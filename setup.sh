@@ -3,7 +3,7 @@
 # Usage: ./setup.sh
 #
 # Creates config.env from .env.example if missing,
-# generates MASTER_KEY and SESSION_SECRET for you,
+# generates MASTER_KEY for you,
 # then builds and starts the container.
 set -euo pipefail
 
@@ -13,13 +13,11 @@ if [ ! -f config.env ]; then
   echo "==> Creating config.env from .env.example"
   cp .env.example config.env
 
-  echo "==> Generating MASTER_KEY and SESSION_SECRET"
+  echo "==> Generating MASTER_KEY"
   MASTER_KEY=$(openssl rand -hex 32)
-  SESSION_SECRET=$(openssl rand -hex 32)
 
   # Replace in-place (portable to macOS sed)
   sed -i.bak "s/^MASTER_KEY=.*/MASTER_KEY=${MASTER_KEY}/" config.env
-  sed -i.bak "s/^SESSION_SECRET=.*/SESSION_SECRET=${SESSION_SECRET}/" config.env
   rm -f config.env.bak
 
   echo "==> Now edit config.env and set your LDAP_* values (host, bind DN, password, search base, filters)."

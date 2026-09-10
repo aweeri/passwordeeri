@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { loadConfig, getConfig } from "./config";
+import { jsonResponse } from "./response";
 
 const APP_NAME = () => getConfig().APP_NAME;
 import { getDb, getSession, getDistinctGroupNames } from "./db";
@@ -17,15 +18,20 @@ const cfg = getConfig();
 const base = cfg.BASE_PATH;
 const router = new Router(base);
 
-// Security headers applied to all HTML responses
+// Security headers applied to all HTML responses. HSTS is only emitted when
+// the app is actually served over HTTPS (via COOKIE_SECURE) — sending it over
+// plain HTTP is pointless and lets a MitM poison the browser's HSTS cache.
 function securityHeaders(contentType: string): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     "Content-Type": contentType,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   };
+  if (getConfig().COOKIE_SECURE) {
+    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+  }
+  return headers;
 }
 
 // -- Auth routes --
@@ -244,9 +250,27 @@ router.get("/login.js", () => {
 const server = Bun.serve({
   port: cfg.PORT,
   async fetch(request, server) {
-    const response = await router.resolve(request, server);
-    if (response) return response;
-    return new Response("Not found", { status: 404 });
+    try {
+      const response = await router.resolve(request, server);
+      if (response) return response;
+      return new Response("Not found", { status: 404 });
+    } catch (err) {
+      // Never let an uncaught exception reach Bun's dev error overlay, which
+      // leaks cwd, absolute paths, and stack frames to remote clients.
+      console.error("[ERROR] Unhandled exception while serving", request.method, request.url, err);
+      const wantsJson = request.headers.get("Accept")?.includes("application/json");
+      if (wantsJson) {
+        return jsonResponse({ error: "Internal server error" }, 500);
+      }
+      return new Response("Internal Server Error", {
+        status: 500,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
   },
 });
 
