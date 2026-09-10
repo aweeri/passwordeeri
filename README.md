@@ -6,7 +6,6 @@ Tiny self-hosted vault that logs you in through your org's LDAP and only shows p
 - One real dependency (`ldapjs`)
 - Passwords encrypted at rest (AES-256-GCM)
 - Plain light UI. No bullshit bebops
-- Single-container Docker deploy
 
 ---
 
@@ -19,89 +18,98 @@ Tiny self-hosted vault that logs you in through your org's LDAP and only shows p
 5. Dashboard only lists entries whose `group_cn` is one of your groups.
 6. You can add passwords to groups you're in and delete passwords from groups you're in. That's it.
 
-## Setup
+## Deploy on a server
 
 ```bash
-cp .env.example config.env      # then edit it
-openssl rand -hex 32            # -> MASTER_KEY (must be exactly 64 hex chars)
-openssl rand -hex 16            # -> SESSION_SECRET
+git clone https://github.com/aweeri/passwordeeri.git
+cd passwordeeri
+./setup.sh          # creates config.env + generates MASTER_KEY/SESSION_SECRET
+# edit config.env, set your LDAP_* values, then:
+./setup.sh          # builds and starts
 ```
 
-Key bits in the env file:
+Script generates the crypto secrets for you so you only need to fill in LDAP bits. App at `http://your-server:3000`. SQLite data in `./data/`.
+
+The compose file is just this:
+
+```yaml
+version: "3.8"
+services:
+  passwordeeri:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - ./config.env
+    restart: unless-stopped
+```
+
+Put an nginx/Caddy in front with HTTPS if prod. Enable `COOKIE_SECURE=true` in that case.
+
+## Env vars
 
 | Var | What |
 |---|---|
-| `LDAP_URL` | `ldap://host:389` or `ldaps://` for TLS |
-| `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account |
-| `LDAP_SEARCH_BASE` | base DN to search under |
-| `LDAP_USER_FILTER` | finds the user; `{{username}}` gets swapped in. AD: `(&(objectClass=user)(sAMAccountName={{username}}))` |
-| `LDAP_GROUP_FILTER` | only needed if `memberOf` isn't set. `{{user_dn}}` gets swapped in. OpenLDAP: `(&(objectClass=groupOfNames)(member={{user_dn}}))` |
+| `LDAP_URL` | `ldap://host:389` or `ldaps://` |
+| `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account creds |
+| `LDAP_SEARCH_BASE` | e.g. `dc=example,dc=com` |
+| `LDAP_USER_FILTER` | find the user; `{{username}}` gets swapped. AD: `(&(objectClass=user)(sAMAccountName={{username}}))` |
+| `LDAP_GROUP_FILTER` | only if `memberOf` isn't populated; `{{user_dn}}` gets swapped. OpenLDAP: `(&(objectClass=groupOfNames)(member={{user_dn}}))` |
 | `MASTER_KEY` | `openssl rand -hex 32` |
-| `SESSION_SECRET` | any random string ≥16 chars |
+| `SESSION_SECRET` | random string ≥16 chars |
+| `COOKIE_SECURE` | `true` if behind HTTPS |
+| `SESSION_TTL_HOURS` | default 8 |
+| `SESSION_REFRESH_MINUTES` | how often to re-check LDAP groups, default 15 |
 
-### Docker
-
-```bash
-docker compose up -d --build
-```
-
-App at `http://localhost:3000`, SQLite data in `./data/`.
-
-### No Docker (dev)
-
-```bash
-bun install
-# set the env vars from config.env in your shell, then:
-bun run dev
-```
-
-### Local testing on Windows (mock LDAP, no docker)
+## Local testing (Windows, no docker)
 
 ```powershell
 bun run test:mock   # terminal 1 — fake LDAP on :1389
-bun run test:app    # terminal 2 — app on :3000 (reads test/config.env)
+bun run test:app    # terminal 2 — app on :3000
 ```
+
+Users: `alice`/`alicepass` (engineering+devops), `bob`/`bobpass` (devops only).
 
 ## Access model
 
-- Every entry has a `group_cn` (the LDAP group that can see it).
-- You see entries where `group_cn` matches any group you're in.
-- Create only for your groups, delete only from your groups.
+- Every entry has a `group_cn`. You see it if you're in that group.
+- Create/delete only works for groups you belong to.
 
 ## API
 
-| Method | Path | Auth | Desc |
+| Method | Path | Auth | Body |
 |---|---|---|---|
-| GET | `/` | – | bounce to `/dashboard` or `/login` |
 | GET | `/login` | – | login page |
-| POST | `/login` | – | `{username,password}` → sets session cookie |
+| POST | `/login` | – | `{username,password}` → session cookie |
 | GET | `/logout` | – | kills session |
-| GET | `/dashboard` | session | dashboard |
+| GET | `/dashboard` | session | the UI |
 | GET | `/api/passwords` | session | decrypted entries you can see |
 | POST | `/api/passwords` | session | `{title,username,url,password,group_cn}` |
-| DELETE | `/api/passwords/:id` | session | delete (group-scoped) |
+| DELETE | `/api/passwords/:id` | session | – |
 
-## Security (kept reasonable, not paranoid)
+## Security (reasonable, not paranoid)
 
 - AES-256-GCM, master key only in env, never in the DB
-- HttpOnly + SameSite cookie, server-side tokens in SQLite
+- HttpOnly + SameSite cookie, server-side tokens, timing-safe comparison
 - Parameterized SQL, HTML-escaped output, CSP + nosniff + frame/ref headers
 - Generic "invalid username or password" — no user enumeration
-- Rate-limited logins (5/min/IP), login delay
-- Sessions re-check LDAP groups periodically, expire if user disappears
-- Create/delete is audit-logged
-- Container runs as non-root. Put an HTTPS reverse proxy in front of it in prod.
+- Rate-limited logins (5/min/IP) plus a random delay
+- Sessions re-verify LDAP groups every 15 min, auto-expire if you're gone
+- All creates/deletes are audit-logged
+- Container runs as non-root
 
 ## Structure
 
 ```
 src/
-  index.ts      # server + routes
-  config.ts     # env loading
-  db.ts         # sqlite + queries + audit log
-  crypto.ts     # AES-256-GCM
-  ldap.ts       # ldap auth + groups
-  middleware.ts # session guards + csrf
-  routes/       # auth.ts, passwords.ts
+  index.ts      server + routes
+  config.ts     env loading
+  db.ts         sqlite, queries, audit log
+  crypto.ts     AES-256-GCM
+  ldap.ts       LDAP auth + group resolution
+  middleware.ts session guards, CSRF
+  routes/       auth.ts, passwords.ts
 public/
-  styles.css    # all the fluff-free styling
+  styles.css    the whole ui
