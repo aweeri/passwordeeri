@@ -8,6 +8,13 @@
   // Groups injected server-side as JSON via window.__GROUPS__
   const groups = window.__GROUPS__ || [];
 
+  // Base path injected server-side (empty string when app runs at root).
+  const BASE = window.__BASE__ || "";
+
+  function url(path) {
+    return BASE + path;
+  }
+
   // passwordMap: id -> plaintext password (never rendered).
   // Populated ONLY when the user explicitly requests decryption of an entry.
   const passwordMap = new Map();
@@ -43,7 +50,7 @@
 
   async function fetchDecrypted(entryId) {
     if (passwordMap.has(entryId)) return passwordMap.get(entryId);
-    const res = await fetch("/api/passwords/" + entryId + "/decrypt");
+    const res = await fetch(url("/api/passwords/" + entryId + "/decrypt"));
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
       throw new Error(b.error || "Decrypt failed");
@@ -127,7 +134,7 @@
 
       var payload = { title: newTitle, username: newUsername, url: newUrl, group_cn: newGroup };
       try {
-        var res = await fetch("/api/passwords/" + entry.id, {
+        var res = await fetch(url("/api/passwords/" + entry.id), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -157,7 +164,7 @@
 
     delBtn.addEventListener("click", async function () {
       if (!confirm('Permanently delete "' + entry.title + '"? This cannot be undone.')) return;
-      var res = await fetch("/api/passwords/" + entry.id, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+      var res = await fetch(url("/api/passwords/" + entry.id), { method: "DELETE", headers: { "Content-Type": "application/json" } });
       if (res.ok) {
         passwordMap.delete(entry.id);
         loadPasswords();
@@ -266,7 +273,7 @@
   }
 
   async function loadPasswords() {
-    var res = await fetch("/api/passwords");
+    var res = await fetch(url("/api/passwords"));
     if (!res.ok) { document.getElementById("pw-body").innerHTML = '<tr><td colspan="5">Failed to load</td></tr>'; return; }
     var data = await res.json();
     var ids = new Set(data.map(function (e) { return e.id; }));
@@ -304,7 +311,7 @@
     var password = document.getElementById("f-password").value.trim();
     var group_cn = document.getElementById("f-group").value;
     if (!title || !username || !password) { alert("Title, username, and password are required"); return; }
-    var res = await fetch("/api/passwords", {
+    var res = await fetch(url("/api/passwords"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: title, username: username, url: url, password: password, group_cn: group_cn }),

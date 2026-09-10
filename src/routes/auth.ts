@@ -70,14 +70,16 @@ function injectSecurityHeaders(headers: Record<string, string>): Record<string, 
 
 export function getLoginPage(_ctx: RequestContext): Response {
   const name = escapeAttr(APP_NAME());
+  const base = getConfig().BASE_PATH;
+  const nonce = randomBytes(16).toString("base64");
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${name}</title>
-<link rel="stylesheet" href="/fonts/material-icons.css">
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="${base}/fonts/material-icons.css">
+<link rel="stylesheet" href="${base}/styles.css">
 </head>
 <body class="login-page">
   <div class="login-box">
@@ -95,13 +97,14 @@ export function getLoginPage(_ctx: RequestContext): Response {
       <button type="submit"><span class="material-icons md-18">login</span> Log in</button>
     </form>
   </div>
-  <script src="/login.js"></script>
+  <script nonce="${nonce}">window.__BASE__ = ${JSON.stringify(base)};</script>
+  <script nonce="${nonce}" src="${base}/login.js"></script>
 </body>
 </html>`;
   return new Response(html, {
     headers: injectSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; object-src 'none'",
+      "Content-Security-Policy": `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-${nonce}'; font-src 'self'; object-src 'none'`,
     }),
   });
 }
@@ -143,6 +146,9 @@ export async function handleLogin(ctx: RequestContext): Promise<Response> {
     const cfg = getConfig();
     const maxAge = cfg.SESSION_TTL_HOURS * 3600;
     const secure = cfg.COOKIE_SECURE ? "; Secure" : "";
+    // Scope the cookie to the base path so it is sent only to the app, not the
+    // whole origin when the app is served under a subpath.
+    const cookiePath = cfg.BASE_PATH || "/";
 
     logAudit(result.username, "login", null, "Login successful");
 
@@ -150,7 +156,7 @@ export async function handleLogin(ctx: RequestContext): Promise<Response> {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Set-Cookie": `session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure}`,
+        "Set-Cookie": `session=${token}; HttpOnly; SameSite=Strict; Path=${cookiePath}; Max-Age=${maxAge}${secure}`,
       },
     });
   } catch (err) {
@@ -171,12 +177,14 @@ export function handleLogout(ctx: RequestContext): Response {
       deleteSession(match[1]);
     }
   }
-  const secure = getConfig().COOKIE_SECURE ? "; Secure" : "";
+  const cfg = getConfig();
+  const secure = cfg.COOKIE_SECURE ? "; Secure" : "";
+  const cookiePath = cfg.BASE_PATH || "/";
   return new Response(null, {
     status: 302,
     headers: {
-      Location: "/login",
-      "Set-Cookie": `session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`,
+      Location: cfg.BASE_PATH + "/login",
+      "Set-Cookie": `session=; HttpOnly; SameSite=Strict; Path=${cookiePath}; Max-Age=0${secure}`,
     },
   });
 }

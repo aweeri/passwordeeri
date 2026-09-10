@@ -13,6 +13,11 @@ interface Route {
 
 export class Router {
   private routes: Route[] = [];
+  private basePath: string;
+
+  constructor(basePath: string = "") {
+    this.basePath = basePath.replace(/\/+$/, "");
+  }
 
   get(path: string, handler: Handler): void {
     this.add("GET", path, handler);
@@ -32,13 +37,23 @@ export class Router {
 
   private add(method: HttpMethod, path: string, handler: Handler): void {
     const paramNames: string[] = [];
-    const regexStr = path
+    // Join base + route path, collapsing duplicate slashes (e.g. base "/pw"
+    // plus route "/" → "/pw/") and dropping any trailing slash so that a bare
+    // base URL like "/pw" resolves to the root route instead of 404ing.
+    let fullPath = (this.basePath + path).replace(/\/{2,}/g, "/");
+    if (fullPath.length > 1 && fullPath.endsWith("/")) {
+      fullPath = fullPath.slice(0, -1);
+    }
+    const regexStr = fullPath
       .replace(/:([a-zA-Z_]+)/g, (_, name) => {
         paramNames.push(name);
         return "([^/]+)";
       })
       .replace(/\//g, "\\/");
-    this.routes.push({ method, pattern: new RegExp(`^${regexStr}$`), paramNames, handler });
+    // The bare root ("/" or "") is the only route without a candidate slash,
+    // so it gets an optional "/" — all other routes tolerate a trailing slash.
+    const pattern = fullPath === "" ? new RegExp("^\\/?$") : new RegExp(`^${regexStr}/?$`);
+    this.routes.push({ method, pattern, paramNames, handler });
   }
 
   async resolve(request: Request, server?: Server): Promise<Response | null> {

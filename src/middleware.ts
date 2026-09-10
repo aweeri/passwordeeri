@@ -116,13 +116,14 @@ function resolveSession(ctx: RequestContext): { token: string } | null {
  */
 export function requireSession(handler: Handler): Handler {
   return (ctx: RequestContext) => {
+    const loginPath = getConfig().BASE_PATH + "/login";
     const resolved = resolveSession(ctx);
     if (!resolved) {
-      return new Response(null, { status: 302, headers: { Location: "/login" } });
+      return new Response(null, { status: 302, headers: { Location: loginPath } });
     }
     const session = getSession(resolved.token);
     if (!session) {
-      return new Response(null, { status: 302, headers: { Location: "/login" } });
+      return new Response(null, { status: 302, headers: { Location: loginPath } });
     }
     ctx.session = session;
     ctx.userGroups = parseGroups(session);

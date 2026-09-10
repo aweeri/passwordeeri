@@ -35,6 +35,8 @@ cd passwordeeri
 
 Script generates the crypto secrets for you so you only need to fill in LDAP bits. App at `http://your-server:3000`. SQLite data in `./data/`.
 
+To serve under a subpath (e.g. `https://your-server/passwords`), set `BASE_PATH=/passwords` in `config.env` and make your reverse proxy forward that path (e.g. nginx `location /passwords/` → `proxy_pass http://127.0.0.1:3000/`). Sessions, redirects, static assets, fonts, and API calls all honor the prefix.
+
 The compose file is just this:
 
 ```yaml
@@ -58,6 +60,7 @@ Put an nginx/Caddy in front with HTTPS if prod. Enable `COOKIE_SECURE=true` in t
 | Var | What |
 |---|---|
 | `APP_NAME` | brand name shown in title/heading/topbar (default `passwordeeri`) |
+| `BASE_PATH` | URL subpath the app is served under (e.g. `/passwords`). Empty = root. No trailing slash. |
 | `LDAP_URL` | `ldap://host:389` or `ldaps://` |
 | `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account creds |
 | `LDAP_SEARCH_BASE` | e.g. `dc=example,dc=com` |

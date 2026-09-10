@@ -13,7 +13,9 @@ import { listPasswordsJson, createPasswordJson, deletePasswordJson, decryptPassw
 loadConfig();
 getDb();
 
-const router = new Router();
+const cfg = getConfig();
+const base = cfg.BASE_PATH;
+const router = new Router(base);
 
 // Security headers applied to all HTML responses
 function securityHeaders(contentType: string): Record<string, string> {
@@ -32,13 +34,13 @@ router.get("/", (ctx) => {
   // Token must be exactly 64 hex characters (32 bytes) — matches randomBytes(32).toString("hex")
   const match = cookie?.match(/\bsession=([a-f0-9]{64})\b/i);
   if (match) {
-    return new Response(null, { status: 302, headers: { Location: "/dashboard" } });
+    return new Response(null, { status: 302, headers: { Location: base + "/dashboard" } });
   }
   // If a session cookie exists but the token is malformed, reject with 401
   if (cookie?.match(/\bsession=/)) {
     return new Response("Unauthorized", { status: 401 });
   }
-  return new Response(null, { status: 302, headers: { Location: "/login" } });
+  return new Response(null, { status: 302, headers: { Location: base + "/login" } });
 });
 
 router.get("/login", getLoginPage);
@@ -89,14 +91,14 @@ router.get("/dashboard", requireSession(async (ctx) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(APP_NAME())}</title>
-<link rel="stylesheet" href="/fonts/material-icons.css">
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="${base}/fonts/material-icons.css">
+<link rel="stylesheet" href="${base}/styles.css">
 </head>
 <body>
   <div class="topbar">
     <span class="app-name">${escapeHtml(APP_NAME())}</span>
     <span class="user-info">${escapeHtml(ctx.username)}</span>
-    <form method="post" action="/logout" class="logout-form">
+    <form method="post" action="${base}/logout" class="logout-form">
       <button type="submit" class="btn-logout">Log out</button>
     </form>
   </div>
@@ -164,8 +166,8 @@ router.get("/dashboard", requireSession(async (ctx) => {
     </table>
   </div>
 
-  <script nonce="${nonce}">window.__GROUPS__ = ${groupsJson};</script>
-  <script src="/dashboard.js" nonce="${nonce}"></script>
+  <script nonce="${nonce}">window.__BASE__ = ${JSON.stringify(base)}; window.__GROUPS__ = ${groupsJson};</script>
+  <script src="${base}/dashboard.js" nonce="${nonce}"></script>
 </body>
 </html>`;
 
@@ -239,7 +241,6 @@ router.get("/login.js", () => {
 });
 
 // -- Start server --
-const cfg = getConfig();
 const server = Bun.serve({
   port: cfg.PORT,
   async fetch(request, server) {

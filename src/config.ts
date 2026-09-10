@@ -1,6 +1,7 @@
 export interface Config {
   APP_NAME: string;
   PORT: number;
+  BASE_PATH: string;
   SESSION_SECRET: string;
   MASTER_KEY: string;
   COOKIE_SECURE: boolean;
@@ -70,6 +71,8 @@ export function loadConfig(): Config {
   config = {
     APP_NAME: envOpt("APP_NAME", "passwordeeri"),
     PORT: envNum("PORT", 3000),
+    // URL subpath the app is served under, e.g. "/passwords". Empty = root.
+    BASE_PATH: normalizeBasePath(envOpt("BASE_PATH", "")),
     SESSION_SECRET: sessionSecret,
     MASTER_KEY: masterKey,
     COOKIE_SECURE: envBool("COOKIE_SECURE", false),
@@ -97,6 +100,18 @@ export function loadConfig(): Config {
   };
 
   return config;
+}
+
+/**
+ * Normalize a BASE_PATH to the form "/sub/path" (leading slash, no trailing
+ * slash). Returns "" when unset. Accepts "passwords", "/passwords/", "/".
+ */
+function normalizeBasePath(raw: string): string {
+  let p = raw.trim();
+  if (!p || p === "/") return "";
+  if (!p.startsWith("/")) p = "/" + p;
+  p = p.replace(/\/+$/, "");
+  return p;
 }
 
 export function getConfig(): Config {
