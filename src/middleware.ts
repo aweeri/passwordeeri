@@ -10,6 +10,7 @@ export interface RequestContext {
   session?: SessionRow;
   userGroups: string[];
   username: string;
+  isSuper: boolean;
 }
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
@@ -126,6 +127,7 @@ export function requireSession(handler: Handler): Handler {
     ctx.session = session;
     ctx.userGroups = parseGroups(session);
     ctx.username = session.username;
+    ctx.isSuper = getConfig().SUPER_GROUPS.some((g) => ctx.userGroups.includes(g));
 
     // Non-critical background refresh (fire-and-forget) — must never block or
     // break the request; failures are logged inside maybeRefresh.
@@ -158,6 +160,7 @@ export function requireSessionJson(handler: Handler): Handler {
     ctx.session = session;
     ctx.userGroups = parseGroups(session);
     ctx.username = session.username;
+    ctx.isSuper = getConfig().SUPER_GROUPS.some((g) => ctx.userGroups.includes(g));
 
     // Non-critical background refresh (fire-and-forget) — must never block or
     // break the request; failures are logged inside maybeRefresh.

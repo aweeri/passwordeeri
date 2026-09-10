@@ -1,4 +1,4 @@
-import { listPasswordsForGroups, getPasswordById, createPassword, deletePassword, logAudit, getDb } from "../db";
+import { listPasswordsForGroups, listAllPasswords, getPasswordById, createPassword, updatePassword, deletePassword, logAudit, getDb } from "../db";
 import { encrypt, decrypt } from "../crypto";
 import type { RequestContext } from "../middleware";
 
@@ -92,7 +92,7 @@ export function listPasswordsJson(ctx: RequestContext): Response {
     });
   }
 
-  const entries = listPasswordsForGroups(ctx.userGroups);
+  const entries = ctx.isSuper ? listAllPasswords() : listPasswordsForGroups(ctx.userGroups);
   const result = entries.map((e) => ({
     id: e.id,
     title: e.title,
@@ -138,8 +138,8 @@ export function decryptPasswordJson(ctx: RequestContext): Response {
     });
   }
 
-  // Group authorization: user must belong to the entry's group
-  if (!ctx.userGroups.includes(entry.group_cn)) {
+  // Group authorization: super users can access any entry
+  if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
     return new Response(JSON.stringify({ error: "You do not have access to this entry" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
@@ -209,7 +209,7 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
   }
 
   // Group authorization: user must belong to the group they're creating for
-  if (!ctx.userGroups.includes(group_cn)) {
+  if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
     return new Response(JSON.stringify({ error: "You do not have access to this group" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
@@ -271,8 +271,8 @@ export function deletePasswordJson(ctx: RequestContext): Response {
     });
   }
 
-  // Group authorization: user must belong to the entry's group
-  if (!ctx.userGroups.includes(entry.group_cn)) {
+  // Group authorization: super users can delete any entry
+  if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
     return new Response(JSON.stringify({ error: "You do not have access to this entry" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
@@ -284,6 +284,126 @@ export function deletePasswordJson(ctx: RequestContext): Response {
   auditLog(ctx.username, "PASSWORD_DELETE", id, `Deleted password "${entry.title}" from group "${entry.group_cn}"`);
 
   return new Response(JSON.stringify({ ok: true }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export async function updatePasswordJson(ctx: RequestContext): Promise<Response> {
+  const rateCheck = checkCrudRateLimit(ctx, 20);
+  if (!rateCheck.allowed) {
+    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    });
+  }
+
+  const id = Number(ctx.params.id);
+  if (Number.isNaN(id)) {
+    return new Response(JSON.stringify({ error: "Invalid ID" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const entry = getPasswordById(id);
+  if (!entry) {
+    return new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Group authorization: super users can update any entry
+  if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
+    return new Response(JSON.stringify({ error: "You do not have access to this entry" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  let body: any;
+  try {
+    body = await ctx.request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const { title, username, url, password, group_cn } = body;
+  if (!title || !username || !group_cn) {
+    return new Response(JSON.stringify({ error: "title, username, and group_cn are required" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Server-side length validation
+  if (title.length > MAX_TITLE) {
+    return new Response(JSON.stringify({ error: `title must be at most ${MAX_TITLE} characters` }), {
+      status: 400, headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (username.length > MAX_USERNAME) {
+    return new Response(JSON.stringify({ error: `username must be at most ${MAX_USERNAME} characters` }), {
+      status: 400, headers: { "Content-Type": "application/json" },
+    });
+  }
+  if ((url || "").length > MAX_URL) {
+    return new Response(JSON.stringify({ error: `url must be at most ${MAX_URL} characters` }), {
+      status: 400, headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (password && password.length > MAX_PASSWORD) {
+    return new Response(JSON.stringify({ error: `password must be at most ${MAX_PASSWORD} characters` }), {
+      status: 400, headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Group authorization: super users can write to any group
+  if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
+    return new Response(JSON.stringify({ error: "You do not have access to this group" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const cleanedTitle = stripCtrl(title.trim());
+  const cleanedUsername = stripCtrl(username.trim());
+  const cleanedUrl = sanitizeUrl(stripCtrl((url || "").trim()));
+
+  // If a new password is provided, re-encrypt with the existing entry id as AAD
+  let encPassword = entry.enc_password;
+  let encIv = entry.enc_iv;
+  let encTag = entry.enc_tag;
+  if (password) {
+    const encrypted = encrypt(password, String(id));
+    encPassword = encrypted.data;
+    encIv = encrypted.iv;
+    encTag = encrypted.tag;
+  }
+
+  const updated = updatePassword(id, {
+    title: cleanedTitle,
+    username: cleanedUsername,
+    url: cleanedUrl,
+    enc_password: encPassword,
+    enc_iv: encIv,
+    enc_tag: encTag,
+    group_cn,
+  });
+
+  if (!updated) {
+    return new Response(JSON.stringify({ error: "Update failed" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  auditLog(ctx.username, "PASSWORD_UPDATE", id, `Updated password "${cleanedTitle}" in group "${group_cn}"`);
+
+  return new Response(JSON.stringify({ id: updated.id, title: updated.title, group_cn: updated.group_cn }), {
     headers: { "Content-Type": "application/json" },
   });
 }

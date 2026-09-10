@@ -7,3 +7,16 @@ config.env
 .env
 /plans
 test/config.env
+
+# Test artifacts from curl / bun build output
+ck*.txt
+nul
+db_served*
+served_check*
+js_headers*
+dashboard_*
+headers.txt
+cookies.txt
+login_resp.txt
+login_out.txt
+dash_resp.txt

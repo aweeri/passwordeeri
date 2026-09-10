@@ -5,68 +5,43 @@
 // extensions, and XSS cannot read them from the page.
 
 (function () {
-  // Groups injected server-side as JSON
+  // Groups injected server-side as JSON via window.__GROUPS__
   const groups = window.__GROUPS__ || [];
 
   // passwordMap: id -> plaintext password (never rendered).
   // Populated ONLY when the user explicitly requests decryption of an entry.
   const passwordMap = new Map();
 
+  // --- Populate the group dropdown ---
   const sel = document.getElementById("f-group");
-  groups.forEach((g) => {
-    const opt = document.createElement("option");
-    opt.value = g;
-    opt.textContent = g;
-    sel.appendChild(opt);
-  });
+  if (sel) {
+    groups.forEach((g) => {
+      const opt = document.createElement("option");
+      opt.value = g;
+      opt.textContent = g;
+      sel.appendChild(opt);
+    });
+  }
 
   function escapeHtml(s) {
     if (s === null || s === undefined) return "";
     return String(s)
-      .replace(/&/g, "&")
-      .replace(/</g, "<")
-      .replace(/>/g, ">")
-      .replace(/"/g, """)
-      .replace(/'/g, "'");
+      .replace(/&/g, "\x26amp;")
+      .replace(/</g, "\x26lt;")
+      .replace(/>/g, "\x26gt;")
+      .replace(/"/g, "\x26quot;")
+      .replace(/'/g, "\x26#39;");
   }
 
   // Client-side URL safety check (defence-in-depth; server also sanitizes).
-  // Only http:// and https:// schemes are allowed for clickable links.
   function isSafeUrl(url) {
     if (!url) return true;
     const u = url.trim().toLowerCase();
     return u.startsWith("http://") || u.startsWith("https://");
   }
 
-  function makeRow(entry) {
-    const tr = document.createElement("tr");
-    let urlCell;
-    if (entry.url && isSafeUrl(entry.url)) {
-      urlCell = `<a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.url)}</a>`;
-    } else if (entry.url) {
-      // Unsafe scheme — render as plain text only, not a clickable link
-      urlCell = `<span class="unsafe-url">${escapeHtml(entry.url)}</span>`;
-    } else {
-      urlCell = "";
-    }
-    tr.innerHTML =
-      "<td>" + escapeHtml(entry.title) + "</td>" +
-      "<td>" + escapeHtml(entry.username) + "</td>" +
-      "<td class=\"url-cell\">" + urlCell + "</td>" +
-      "<td>" + escapeHtml(entry.group_cn) + "</td>" +
-      "<td>" +
-        "<button class=\"btn-decrypt\" data-id=\"" + entry.id + "\">Show</button>" +
-        "<button class=\"btn-copy\" data-id=\"" + entry.id + "\" disabled>Copy</button>" +
-        "<button class=\"btn-del\" data-id=\"" + entry.id + "\">Delete</button>" +
-      "</td>";
-    return tr;
-  }
-
   async function fetchDecrypted(entryId) {
-    // On-demand decryption: request this single entry's plaintext from the
-    // server, then cache it in the in-memory Map for this session.
     if (passwordMap.has(entryId)) return passwordMap.get(entryId);
-
     const res = await fetch("/api/passwords/" + entryId + "/decrypt");
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
@@ -77,84 +52,199 @@
     return data.password;
   }
 
-  function bindRowActions(tr, entry) {
-    const decryptBtn = tr.querySelector(".btn-decrypt");
-    const copyBtn = tr.querySelector(".btn-copy");
-    const delBtn = tr.querySelector(".btn-del");
+  // --- Build the group select options HTML for edit mode ---
+  function groupOptionsHtml(selected) {
+    return groups.map(function (g) {
+      var selAttr = g === selected ? ' selected' : '';
+      return '<option value="' + escapeHtml(g) + '"' + selAttr + '>' + escapeHtml(g) + '</option>';
+    }).join('');
+  }
 
-    // "Show" / "Decrypt" — the only action that pulls the plaintext
-    decryptBtn.addEventListener("click", async () => {
-      decryptBtn.disabled = true;
-      decryptBtn.textContent = "…";
+  function makeRow(entry) {
+    var tr = document.createElement("tr");
+    tr.dataset.entryId = entry.id;
+    renderRowView(tr, entry);
+    return tr;
+  }
+
+  function renderRowView(tr, entry) {
+    var urlCell;
+    if (entry.url && isSafeUrl(entry.url)) {
+      urlCell = '<a href="' + escapeHtml(entry.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(entry.url) + '</a>';
+    } else if (entry.url) {
+      urlCell = '<span class="unsafe-url">' + escapeHtml(entry.url) + '</span>';
+    } else {
+      urlCell = "";
+    }
+    tr.innerHTML =
+      '<td class="td-title" data-field="title">' + escapeHtml(entry.title) + '</td>' +
+      '<td class="td-username" data-field="username">' + escapeHtml(entry.username) + '</td>' +
+      '<td class="url-cell td-url" data-field="url">' + urlCell + '</td>' +
+      '<td class="td-group" data-field="group_cn">' + escapeHtml(entry.group_cn) + '</td>' +
+      '<td class="actions-cell">' +
+        '<button class="btn-copy" data-id="' + entry.id + '" title="Copy password"><span class="material-icons md-18">content_copy</span> Copy</button>' +
+        '<button class="btn-edit" data-id="' + entry.id + '" title="Edit entry"><span class="material-icons md-18">edit</span> Edit</button>' +
+      '</td>';
+
+    // Bind actions on the view row
+    bindRowActions(tr, entry);
+  }
+
+  function renderEditForm(tr, entry) {
+    var title = tr.querySelector('.td-title')?.textContent || entry.title;
+    var username = tr.querySelector('.td-username')?.textContent || entry.username;
+    var urlEl = tr.querySelector('.td-url');
+    var url = urlEl ? (urlEl.querySelector('a')?.textContent || urlEl.textContent || entry.url || '') : (entry.url || '');
+    var groupEl = tr.querySelector('.td-group');
+    var group_cn = groupEl?.textContent || entry.group_cn;
+
+    tr.innerHTML =
+      '<td><input type="text" class="edit-title" value="' + escapeHtml(title) + '" placeholder="Title" autocomplete="off"></td>' +
+      '<td><input type="text" class="edit-username" value="' + escapeHtml(username) + '" placeholder="Username" autocomplete="off"></td>' +
+      '<td><input type="text" class="edit-url" value="' + escapeHtml(url) + '" placeholder="URL" autocomplete="off"></td>' +
+      '<td><select class="edit-group">' + groupOptionsHtml(group_cn) + '</select></td>' +
+      '<td class="actions-cell">' +
+        '<button class="btn-save" data-id="' + entry.id + '"><span class="material-icons md-18">save</span> Save</button>' +
+        '<button class="btn-cancel-edit" data-id="' + entry.id + '"><span class="material-icons md-18">close</span></button>' +
+        '<button class="btn-del-inline" data-id="' + entry.id + '" title="Delete this entry permanently"><span class="material-icons md-18">delete_forever</span></button>' +
+      '</td>';
+
+    // Bind edit mode actions
+    var saveBtn = tr.querySelector(".btn-save");
+    var cancelBtn = tr.querySelector(".btn-cancel-edit");
+    var delBtn = tr.querySelector(".btn-del-inline");
+
+    saveBtn.addEventListener("click", async function () {
+      var newTitle = tr.querySelector(".edit-title").value.trim();
+      var newUsername = tr.querySelector(".edit-username").value.trim();
+      var newUrl = tr.querySelector(".edit-url").value.trim();
+      var newGroup = tr.querySelector(".edit-group").value;
+      if (!newTitle || !newUsername) { alert("Title and username are required"); return; }
+
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="material-icons md-18">sync</span>';
+
+      var payload = { title: newTitle, username: newUsername, url: newUrl, group_cn: newGroup };
       try {
-        await fetchDecrypted(entry.id);
-        decryptBtn.textContent = "Shown";
-        // Reveal the copy button now that the plaintext is cached
-        copyBtn.disabled = false;
-        copyBtn.textContent = "Copy";
+        var res = await fetch("/api/passwords/" + entry.id, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          entry.title = newTitle;
+          entry.username = newUsername;
+          entry.url = newUrl;
+          entry.group_cn = newGroup;
+          renderRowView(tr, entry);
+        } else {
+          var b = await res.json();
+          alert(b.error || "Update failed");
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = '<span class="material-icons md-18">save</span> Save';
+        }
       } catch (e) {
-        decryptBtn.textContent = "Retry";
-        alert(e.message || "Failed to decrypt");
+        alert("Network error");
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<span class="material-icons md-18">save</span> Save';
       }
     });
 
-    copyBtn.addEventListener("click", async () => {
-      // Look up the password from the in-memory map, NOT from the DOM
-      const pw = passwordMap.get(entry.id);
-      if (pw === undefined) { copyBtn.textContent = "Unavailable"; return; }
-      try {
-        await navigator.clipboard.writeText(pw);
-        copyBtn.textContent = "Copied!";
-        setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
-      } catch {
-        copyBtn.textContent = "Error";
-      }
+    cancelBtn.addEventListener("click", function () {
+      renderRowView(tr, entry);
     });
 
-    delBtn.addEventListener("click", async () => {
-      if (!confirm("Delete this password?")) return;
-      const res = await fetch("/api/passwords/" + entry.id, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+    delBtn.addEventListener("click", async function () {
+      if (!confirm('Permanently delete "' + entry.title + '"? This cannot be undone.')) return;
+      var res = await fetch("/api/passwords/" + entry.id, { method: "DELETE", headers: { "Content-Type": "application/json" } });
       if (res.ok) {
         passwordMap.delete(entry.id);
         loadPasswords();
       } else {
-        const b = await res.json();
+        var b = await res.json();
         alert(b.error || "Delete failed");
       }
     });
   }
 
+  function bindRowActions(tr, entry) {
+    var copyBtn = tr.querySelector(".btn-copy");
+    var editBtn = tr.querySelector(".btn-edit");
+
+    // Copy — fetch the encrypted entry and copy the decrypted password
+    copyBtn.addEventListener("click", async function () {
+      copyBtn.disabled = true;
+      copyBtn.innerHTML = '<span class="material-icons md-18">sync</span>';
+      try {
+        var pw = await fetchDecrypted(entry.id);
+        await navigator.clipboard.writeText(pw);
+        copyBtn.innerHTML = '<span class="material-icons md-18">check_circle</span> Copied!';
+        setTimeout(function () {
+          copyBtn.disabled = false;
+          copyBtn.innerHTML = '<span class="material-icons md-18">content_copy</span> Copy';
+        }, 2000);
+      } catch (e) {
+        copyBtn.disabled = false;
+        copyBtn.innerHTML = '<span class="material-icons md-18">error_outline</span> Error';
+        setTimeout(function () { copyBtn.innerHTML = '<span class="material-icons md-18">content_copy</span> Copy'; }, 2000);
+      }
+    });
+
+    // Edit — switch row to inline edit form
+    editBtn.addEventListener("click", function () {
+      renderEditForm(tr, entry);
+    });
+  }
+
   async function loadPasswords() {
-    // Fetch metadata + encrypted blobs ONLY. No plaintext is transferred.
-    const res = await fetch("/api/passwords");
-    if (!res.ok) { document.getElementById("pw-body").innerHTML = "<tr><td colspan=\"5\">Failed to load</td></tr>"; return; }
-    const data = await res.json();
-    // Keep cached decryptions for entries that still exist; drop removed ones
-    const ids = new Set(data.map((e) => e.id));
-    for (const id of [...passwordMap.keys()]) {
+    var res = await fetch("/api/passwords");
+    if (!res.ok) { document.getElementById("pw-body").innerHTML = '<tr><td colspan="5">Failed to load</td></tr>'; return; }
+    var data = await res.json();
+    var ids = new Set(data.map(function (e) { return e.id; }));
+    for (var id of [...passwordMap.keys()]) {
       if (!ids.has(id)) passwordMap.delete(id);
     }
 
-    const tbody = document.getElementById("pw-body");
+    var tbody = document.getElementById("pw-body");
     tbody.innerHTML = "";
-    for (const entry of data) {
-      const tr = makeRow(entry);
-      bindRowActions(tr, entry);
+    for (var i = 0; i < data.length; i++) {
+      var entry = data[i];
+      var tr = makeRow(entry);
       tbody.appendChild(tr);
     }
   }
 
-  document.getElementById("btn-add").addEventListener("click", async () => {
-    const title = document.getElementById("f-title").value.trim();
-    const username = document.getElementById("f-username").value.trim();
-    const url = document.getElementById("f-url").value.trim();
-    const password = document.getElementById("f-password").value.trim();
-    const group_cn = document.getElementById("f-group").value;
+  // --- Toggle the add form ---
+  var toggleBtn = document.getElementById("btn-toggle-add");
+  var addForm = document.getElementById("add-form");
+  if (toggleBtn && addForm) {
+    addForm.style.display = "none";
+    toggleBtn.innerHTML = '<span class="material-icons md-18">add</span> Add password';
+    toggleBtn.addEventListener("click", function () {
+      if (addForm.style.display === "none" || addForm.style.display === "") {
+        addForm.style.display = "block";
+        toggleBtn.innerHTML = '<span class="material-icons md-18">close</span> Cancel';
+      } else {
+        addForm.style.display = "none";
+        toggleBtn.innerHTML = '<span class="material-icons md-18">add</span> Add password';
+      }
+    });
+  }
+
+  // --- Add a new password ---
+  var addBtn = document.getElementById("btn-add");
+  addBtn.innerHTML = '<span class="material-icons md-18">add_circle_outline</span> Add';
+  addBtn.addEventListener("click", async function () {
+    var title = document.getElementById("f-title").value.trim();
+    var username = document.getElementById("f-username").value.trim();
+    var url = document.getElementById("f-url").value.trim();
+    var password = document.getElementById("f-password").value.trim();
+    var group_cn = document.getElementById("f-group").value;
     if (!title || !username || !password) { alert("Title, username, and password are required"); return; }
-    const res = await fetch("/api/passwords", {
+    var res = await fetch("/api/passwords", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, username, url, password, group_cn }),
+      body: JSON.stringify({ title: title, username: username, url: url, password: password, group_cn: group_cn }),
     });
     if (res.ok) {
       document.getElementById("f-title").value = "";
@@ -163,10 +253,11 @@
       document.getElementById("f-password").value = "";
       loadPasswords();
     } else {
-      const b = await res.json();
+      var b = await res.json();
       alert(b.error || "Failed to add");
     }
   });
 
+  // Initial load
   loadPasswords();
 })();

@@ -22,6 +22,10 @@ export class Router {
     this.add("POST", path, handler);
   }
 
+  put(path: string, handler: Handler): void {
+    this.add("PUT", path, handler);
+  }
+
   delete(path: string, handler: Handler): void {
     this.add("DELETE", path, handler);
   }

@@ -1,11 +1,13 @@
+import { randomBytes } from "node:crypto";
 import { loadConfig, getConfig } from "./config";
 
 const APP_NAME = () => getConfig().APP_NAME;
-import { getDb, getSession } from "./db";
+import { getDb, getSession, getDistinctGroupNames } from "./db";
 import { Router } from "./router";
 import { requireSession, requireSessionJson } from "./middleware";
+import { getAllGroupNames } from "./ldap";
 import { getLoginPage, handleLogin, handleLogout } from "./routes/auth";
-import { listPasswordsJson, createPasswordJson, deletePasswordJson, decryptPasswordJson } from "./routes/passwords";
+import { listPasswordsJson, createPasswordJson, deletePasswordJson, decryptPasswordJson, updatePasswordJson } from "./routes/passwords";
 
 // Load config and init DB at startup
 loadConfig();
@@ -44,9 +46,23 @@ router.post("/login", handleLogin);
 router.post("/logout", handleLogout);
 
 // -- Dashboard (session required) --
-router.get("/dashboard", requireSession((ctx) => {
+router.get("/dashboard", requireSession(async (ctx) => {
+  // Per-request CSP nonce so the inline groups bootstrap + external script
+  // are allowed while everything else is blocked (script-src 'self' 'strict-dynamic')
+  const nonce = randomBytes(16).toString("base64");
+
+  // Super users see all groups in the dropdown so they can create/edit in any
+  // group. Merge LDAP group names with existing DB groups for safety.
+  let availableGroups = ctx.userGroups;
+  if (ctx.isSuper) {
+    const ldapGroups = await getAllGroupNames();
+    const dbGroups = getDistinctGroupNames();
+    const merged = [...new Set([...ldapGroups, ...dbGroups, ...ctx.userGroups])].filter(Boolean) as string[];
+    availableGroups = merged.length > 0 ? merged : ctx.userGroups;
+  }
+
   // Inject groups as JSON for the external script
-  const groupsJson = JSON.stringify(ctx.userGroups)
+  const groupsJson = JSON.stringify(availableGroups)
     .replace(/</g, "\\u003c") // neutralize any </script> breakout
     .replace(/>/g, "\\u003e");
 
@@ -56,6 +72,7 @@ router.get("/dashboard", requireSession((ctx) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(APP_NAME())}</title>
+<link rel="stylesheet" href="/fonts/material-icons.css">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -97,185 +114,8 @@ router.get("/dashboard", requireSession((ctx) => {
     </table>
   </div>
 
-  <script>
-    window.__GROUPS__ = ${groupsJson};
-    (function() {
-      // passwordMap: id -> plaintext password (never rendered).
-      // Populated ONLY when the user explicitly requests decryption.
-      var passwordMap = {};
-      var groups = window.__GROUPS__ || [];
-
-      // --- Populate the group dropdown ---
-      var sel = document.getElementById("f-group");
-      if (sel) {
-        groups.forEach(function(g) {
-          var opt = document.createElement("option");
-          opt.value = g;
-          opt.textContent = g;
-          sel.appendChild(opt);
-        });
-      }
-
-      // --- Escape HTML for safe rendering ---
-      function esc(s) {
-        if (s === null || s === undefined) return "";
-        return String(s)
-          .replace(/&/g, "\x26amp;")
-          .replace(/</g, "\x26lt;")
-          .replace(/>/g, "\x26gt;")
-          .replace(/\x22/g, "\x26quot;")
-          .replace(/'/g, "\x26#39;");
-      }
-
-      // --- Render one row ---
-      function makeRow(entry) {
-        var tr = document.createElement("tr");
-        var urlCell = entry.url
-          ? '<a href="' + esc(entry.url) + '" target="_blank" rel="noopener noreferrer">' + esc(entry.url) + "</a>"
-          : "";
-        tr.innerHTML =
-          "<td>" + esc(entry.title) + "</td>" +
-          "<td>" + esc(entry.username) + "</td>" +
-          '<td class="url-cell">' + urlCell + "</td>" +
-          "<td>" + esc(entry.group_cn) + "</td>" +
-          "<td>" +
-            '<button class="btn-decrypt" data-id="' + entry.id + '">Show</button>' +
-            '<button class="btn-copy" data-id="' + entry.id + '" disabled>Copy</button>' +
-            '<button class="btn-del" data-id="' + entry.id + '">Delete</button>' +
-          "</td>";
-        return tr;
-      }
-
-      // --- On-demand decryption ---
-      async function fetchDecrypted(entryId) {
-        if (passwordMap[entryId] !== undefined) return passwordMap[entryId];
-        var res = await fetch("/api/passwords/" + entryId + "/decrypt");
-        if (!res.ok) {
-          var b = await res.json().catch(function() { return {}; });
-          throw new Error(b.error || "Decrypt failed");
-        }
-        var data = await res.json();
-        passwordMap[entryId] = data.password;
-        return data.password;
-      }
-
-      // --- Bind row actions ---
-      function bindRowActions(tr, entry) {
-        var decryptBtn = tr.querySelector(".btn-decrypt");
-        var copyBtn = tr.querySelector(".btn-copy");
-        var delBtn = tr.querySelector(".btn-del");
-
-        decryptBtn.addEventListener("click", async function() {
-          decryptBtn.disabled = true;
-          decryptBtn.textContent = "\u2026";
-          try {
-            await fetchDecrypted(entry.id);
-            decryptBtn.textContent = "Shown";
-            copyBtn.disabled = false;
-            copyBtn.textContent = "Copy";
-          } catch (e) {
-            decryptBtn.textContent = "Retry";
-            alert(e.message || "Failed to decrypt");
-          }
-        });
-
-        copyBtn.addEventListener("click", async function() {
-          var pw = passwordMap[entry.id];
-          if (pw === undefined) { copyBtn.textContent = "Unavailable"; return; }
-          try {
-            await navigator.clipboard.writeText(pw);
-            copyBtn.textContent = "Copied!";
-            setTimeout(function() { copyBtn.textContent = "Copy"; }, 2000);
-          } catch (e) {
-            copyBtn.textContent = "Error";
-          }
-        });
-
-        delBtn.addEventListener("click", async function() {
-          if (!confirm("Delete this password?")) return;
-          var res = await fetch("/api/passwords/" + entry.id, { method: "DELETE", headers: { "Content-Type": "application/json" } });
-          if (res.ok) {
-            delete passwordMap[entry.id];
-            loadPasswords();
-          } else {
-            var b = await res.json();
-            alert(b.error || "Delete failed");
-          }
-        });
-      }
-
-      // --- Load the password table (encrypted blobs only) ---
-      async function loadPasswords() {
-        var res = await fetch("/api/passwords");
-        if (!res.ok) {
-          document.getElementById("pw-body").innerHTML = '<tr><td colspan="5">Failed to load</td></tr>';
-          return;
-        }
-        var data = await res.json();
-        // Keep cached decryptions for entries that still exist; drop removed ones
-        var ids = {};
-        data.forEach(function(e) { ids[e.id] = true; });
-        Object.keys(passwordMap).forEach(function(id) {
-          if (!ids[id]) delete passwordMap[id];
-        });
-
-        var tbody = document.getElementById("pw-body");
-        tbody.innerHTML = "";
-        data.forEach(function(entry) {
-          var tr = makeRow(entry);
-          bindRowActions(tr, entry);
-          tbody.appendChild(tr);
-        });
-      }
-
-      // --- Toggle the add form ---
-      var form = document.getElementById("add-form");
-      var toggleBtn = document.getElementById("btn-toggle-add");
-      if (form && toggleBtn) {
-        form.style.display = "none";
-        toggleBtn.addEventListener("click", function() {
-          if (form.style.display === "none" || form.style.display === "") {
-            form.style.display = "block";
-            toggleBtn.textContent = "− Cancel";
-          } else {
-            form.style.display = "none";
-            toggleBtn.textContent = "+ Add password";
-          }
-        });
-      }
-
-      // --- Add a new password ---
-      var addBtn = document.getElementById("btn-add");
-      if (addBtn) {
-        addBtn.addEventListener("click", async function() {
-          var title = document.getElementById("f-title").value.trim();
-          var username = document.getElementById("f-username").value.trim();
-          var url = document.getElementById("f-url").value.trim();
-          var password = document.getElementById("f-password").value.trim();
-          var group_cn = document.getElementById("f-group").value;
-          if (!title || !username || !password) { alert("Title, username, and password are required"); return; }
-          var res = await fetch("/api/passwords", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: title, username: username, url: url, password: password, group_cn: group_cn }),
-          });
-          if (res.ok) {
-            document.getElementById("f-title").value = "";
-            document.getElementById("f-username").value = "";
-            document.getElementById("f-url").value = "";
-            document.getElementById("f-password").value = "";
-            loadPasswords();
-          } else {
-            var b = await res.json();
-            alert(b.error || "Failed to add");
-          }
-        });
-      }
-
-      // Initial load
-      loadPasswords();
-    })();
-  </script>
+  <script nonce="${nonce}">window.__GROUPS__ = ${groupsJson};</script>
+  <script src="/dashboard.js" nonce="${nonce}"></script>
 </body>
 </html>`;
 
@@ -284,7 +124,7 @@ router.get("/dashboard", requireSession((ctx) => {
       ...securityHeaders("text/html; charset=utf-8"),
       "Cache-Control": "no-cache, no-store",
       "Content-Security-Policy":
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'strict-dynamic'; object-src 'none'; frame-ancestors 'none'",
+        `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'strict-dynamic' 'nonce-${nonce}'; font-src 'self'; object-src 'none'; frame-ancestors 'none'`,
     },
   });
 }));
@@ -293,6 +133,7 @@ router.get("/dashboard", requireSession((ctx) => {
 router.get("/api/passwords", requireSessionJson(listPasswordsJson));
 router.post("/api/passwords", requireSessionJson(createPasswordJson));
 router.get("/api/passwords/:id/decrypt", requireSessionJson(decryptPasswordJson));
+router.put("/api/passwords/:id", requireSessionJson(updatePasswordJson));
 router.delete("/api/passwords/:id", requireSessionJson(deletePasswordJson));
 
 // -- Static files (public/*) --
@@ -302,6 +143,26 @@ router.get("/styles.css", () => {
     headers: {
       "Content-Type": "text/css; charset=utf-8",
       "Cache-Control": "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+});
+router.get("/fonts/material-icons.css", () => {
+  const file = Bun.file("public/fonts/material-icons.css");
+  return new Response(file, {
+    headers: {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+});
+router.get("/fonts/MaterialIcons.woff2", () => {
+  const file = Bun.file("public/fonts/MaterialIcons.woff2");
+  return new Response(file, {
+    headers: {
+      "Content-Type": "font/woff2",
+      "Cache-Control": "public, max-age=31536000, immutable",
       "X-Content-Type-Options": "nosniff",
     },
   });

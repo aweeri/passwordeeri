@@ -109,6 +109,17 @@ export function listPasswordsForGroups(groups: string[]): PasswordEntry[] {
     .all(...groups) as PasswordEntry[];
 }
 
+export function listAllPasswords(): PasswordEntry[] {
+  return getDb().query("SELECT * FROM passwords ORDER BY title").all() as PasswordEntry[];
+}
+
+export function getDistinctGroupNames(): string[] {
+  const rows = getDb()
+    .query("SELECT DISTINCT group_cn FROM passwords ORDER BY group_cn")
+    .all() as { group_cn: string }[];
+  return rows.map((r) => r.group_cn).filter(Boolean);
+}
+
 export function getPasswordById(id: number): PasswordEntry | null {
   return getDb().query("SELECT * FROM passwords WHERE id = ?").get(id) as PasswordEntry | null;
 }
@@ -134,6 +145,29 @@ export function createPassword(data: {
 export function deletePassword(id: number): boolean {
   const result = getDb().query("DELETE FROM passwords WHERE id = ?").run(id);
   return result.changes > 0;
+}
+
+export function updatePassword(
+  id: number,
+  data: {
+    title: string;
+    username: string;
+    url: string;
+    enc_password: string;
+    enc_iv: string;
+    enc_tag: string;
+    group_cn: string;
+  }
+): PasswordEntry | null {
+  const result = getDb()
+    .query(
+      `UPDATE passwords
+       SET title = ?, username = ?, url = ?, enc_password = ?, enc_iv = ?, enc_tag = ?, group_cn = ?, updated_at = datetime('now')
+       WHERE id = ?`
+    )
+    .run(data.title, data.username, data.url, data.enc_password, data.enc_iv, data.enc_tag, data.group_cn, id);
+  if (result.changes === 0) return null;
+  return getPasswordById(id);
 }
 
 // ---- Sessions ----

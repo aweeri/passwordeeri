@@ -76,6 +76,7 @@ export function getLoginPage(_ctx: RequestContext): Response {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${name}</title>
+<link rel="stylesheet" href="/fonts/material-icons.css">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="login-page">
@@ -91,7 +92,7 @@ export function getLoginPage(_ctx: RequestContext): Response {
         <input type="password" id="password" name="password" autocomplete="current-password" required>
       </div>
       <div id="error-msg" class="error-msg" style="display:none"></div>
-      <button type="submit">Log in</button>
+      <button type="submit"><span class="material-icons md-18">login</span> Log in</button>
     </form>
   </div>
   <script src="/login.js"></script>
@@ -100,7 +101,7 @@ export function getLoginPage(_ctx: RequestContext): Response {
   return new Response(html, {
     headers: injectSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'",
+      "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; object-src 'none'",
     }),
   });
 }

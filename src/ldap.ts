@@ -178,6 +178,35 @@ export async function getGroupsForUser(username: string): Promise<string[]> {
   }
 }
 
+/**
+ * Return the CN of every group in the directory. Used to populate the
+ * group dropdown for super-group members, who may create entries in ANY group.
+ */
+export async function getAllGroupNames(): Promise<string[]> {
+  const cfg = getConfig();
+  const client = makeClient();
+
+  try {
+    await bind(client, cfg.LDAP_BIND_DN, cfg.LDAP_BIND_PASSWORD);
+    const results = await searchOnce(client, cfg.LDAP_SEARCH_BASE, "(objectClass=groupOfNames)", ["cn"]);
+    const names = results
+      .map((r) => {
+        const cn = r.attributes.cn;
+        if (Array.isArray(cn)) return cn[0] ?? null;
+        return cn ?? null;
+      })
+      .filter((n): n is string => typeof n === "string" && n.length > 0);
+    // Deduplicate while preserving order
+    return [...new Set(names)];
+  } finally {
+    try {
+      client.unbind(() => {});
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function escapeFilterValue(value: string): string {
   // LDAP filter escaping — prefix every special character with \
   // Special chars: \ * ( ) & | ! = ~ < > : and NUL (\00)

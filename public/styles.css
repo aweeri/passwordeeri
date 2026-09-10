@@ -82,6 +82,10 @@ a {
   border: 1px solid var(--accent);
   cursor: pointer;
   font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .login-box button:hover {
@@ -159,7 +163,9 @@ a {
 /* Toggle button to show/hide add form */
 
 .btn-toggle {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 16px;
   padding: 6px 12px;
   background: #ffffff;
@@ -215,6 +221,9 @@ a {
 }
 
 .form-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 14px;
   background: var(--accent);
   color: #ffffff;
@@ -266,28 +275,170 @@ td.url-cell {
   word-break: break-all;
 }
 
+.actions-cell {
+  white-space: nowrap;
+}
+
 .btn-copy,
 .btn-del {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
   font-size: 12px;
-  border: 1px solid var(--border);
-  background: #ffffff;
+  font-family: inherit;
+  border-radius: 4px;
   cursor: pointer;
-  margin-right: 4px;
+  margin-right: 6px;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.btn-copy {
+  background: #eaf2fb;
+  color: var(--accent);
+  border-color: #c5d9f0;
 }
 
 .btn-copy:hover {
-  background: var(--row-alt);
+  background: #d5e6f9;
+  border-color: var(--accent);
+}
+
+.btn-copy:disabled {
+  opacity: 0.7;
+  cursor: default;
 }
 
 .btn-del {
+  background: #fce9e9;
   color: var(--danger);
+  border-color: #f2c9c9;
 }
 
 .btn-del:hover {
   background: var(--danger);
   color: #ffffff;
   border-color: var(--danger);
+}
+
+.btn-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 6px;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease;
+  background: #f0edd8;
+  color: #8a7e2b;
+  border-color: #ddd7aa;
+}
+
+.btn-edit:hover {
+  background: #e8e2c5;
+  border-color: #c5b97a;
+}
+
+/* Inline edit mode inputs */
+.edit-title,
+.edit-username,
+.edit-url {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.edit-title:focus,
+.edit-username:focus,
+.edit-url:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.edit-group {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+  background: #ffffff;
+}
+
+.btn-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 6px;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease;
+  background: #e4f0e4;
+  color: #2a7a2a;
+  border-color: #bcdcbc;
+}
+
+.btn-save:hover {
+  background: #d2e8d2;
+  border-color: #7ac07a;
+}
+
+.btn-save:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.btn-cancel-edit {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.btn-cancel-edit:hover {
+  background: var(--row-alt);
+}
+
+/* Delete button — only visible in edit mode, styled subtly */
+.btn-del-inline {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cc8888;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, color 0.12s ease;
+  margin-left: 4px;
+}
+
+.btn-del-inline:hover {
+  opacity: 1;
+  color: var(--danger);
+  background: transparent;
+  border-color: transparent;
 }
 
 @media (max-width: 600px) {
