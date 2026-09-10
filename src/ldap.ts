@@ -122,6 +122,14 @@ export async function authenticate(username: string, password: string): Promise<
       .map((dn) => extractCn(dn))
       .filter(Boolean) as string[];
 
+    // 5. Login whitelist: if configured, the user must be a member of at
+    // least one whitelisted group. Checked AFTER password verification so
+    // non-whitelisted users get the same generic error as a wrong password
+    // (prevents group-membership enumeration).
+    if (!isLoginAllowed(cfg.LOGIN_GROUPS, groups)) {
+      throw new AuthError();
+    }
+
     return { username, groups };
   } finally {
     try {
@@ -165,10 +173,18 @@ export async function getGroupsForUser(username: string): Promise<string[]> {
       groupDns = groupResults.map((r) => r.dn);
     }
 
-    return groupDns
+    const groups = groupDns
       .filter(Boolean)
       .map((dn) => extractCn(dn))
       .filter(Boolean) as string[];
+
+    // Login whitelist: if the user is no longer in an allowed group,
+    // signal the caller to expire their session.
+    if (!isLoginAllowed(cfg.LOGIN_GROUPS, groups)) {
+      throw new AuthError();
+    }
+
+    return groups;
   } finally {
     try {
       client.unbind(() => {});
@@ -205,6 +221,16 @@ export async function getAllGroupNames(): Promise<string[]> {
       // ignore
     }
   }
+}
+
+/**
+ * Login whitelist check. Empty whitelist = allow everyone.
+ * Case-insensitive match (LDAP group names may differ in case across systems).
+ */
+function isLoginAllowed(whitelist: string[], userGroups: string[]): boolean {
+  if (whitelist.length === 0) return true;
+  const lower = whitelist.map((g) => g.toLowerCase());
+  return userGroups.some((g) => lower.includes(g.toLowerCase()));
 }
 
 function escapeFilterValue(value: string): string {

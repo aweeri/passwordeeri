@@ -14,6 +14,7 @@ export interface Config {
   LDAP_GROUP_FILTER: string;
   LDAP_GROUP_ATTR: string;
   SUPER_GROUPS: string[];
+  LOGIN_GROUPS: string[];
   DATA_DIR: string;
 }
 
@@ -84,6 +85,11 @@ export function loadConfig(): Config {
     LDAP_GROUP_ATTR: envOpt("LDAP_GROUP_ATTR", "memberOf"),
     // Comma-separated list of group names that get full access to ALL entries
     SUPER_GROUPS: envOpt("SUPER_GROUPS", "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    // Comma-separated whitelist of groups allowed to log in. Empty = allow all.
+    LOGIN_GROUPS: envOpt("LOGIN_GROUPS", "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
