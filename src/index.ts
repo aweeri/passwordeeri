@@ -250,16 +250,18 @@ router.get("/login.js", () => {
 const server = Bun.serve({
   port: cfg.PORT,
   async fetch(request, server) {
+    // Requests under /api are always JSON. errors must be JSON too
+    const isApi = new URL(request.url).pathname.startsWith((base || "") + "/api/");
     try {
       const response = await router.resolve(request, server);
       if (response) return response;
+      if (isApi) return jsonResponse({ error: "Not found" }, 404);
       return new Response("Not found", { status: 404 });
     } catch (err) {
       // Never let an uncaught exception reach Bun's dev error overlay, which
       // leaks cwd, absolute paths, and stack frames to remote clients.
       console.error("[ERROR] Unhandled exception while serving", request.method, request.url, err);
-      const wantsJson = request.headers.get("Accept")?.includes("application/json");
-      if (wantsJson) {
+      if (isApi) {
         return jsonResponse({ error: "Internal server error" }, 500);
       }
       return new Response("Internal Server Error", {

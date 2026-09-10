@@ -102,14 +102,14 @@
     var title = tr.querySelector('.td-title')?.textContent || entry.title;
     var username = tr.querySelector('.td-username')?.textContent || entry.username;
     var urlEl = tr.querySelector('.td-url');
-    var url = urlEl ? (urlEl.querySelector('a')?.textContent || urlEl.textContent || entry.url || '') : (entry.url || '');
+    var editUrl = urlEl ? (urlEl.querySelector('a')?.textContent || urlEl.textContent || entry.url || '') : (entry.url || '');
     var groupEl = tr.querySelector('.td-group');
     var group_cn = groupEl?.textContent || entry.group_cn;
 
     tr.innerHTML =
       '<td><input type="text" class="edit-title" value="' + escapeHtml(title) + '" placeholder="Title" autocomplete="off"></td>' +
       '<td><input type="text" class="edit-username" value="' + escapeHtml(username) + '" placeholder="Username" autocomplete="off"></td>' +
-      '<td><input type="text" class="edit-url" value="' + escapeHtml(url) + '" placeholder="URL" autocomplete="off"></td>' +
+      '<td><input type="text" class="edit-url" value="' + escapeHtml(editUrl) + '" placeholder="URL" autocomplete="off"></td>' +
       '<td><select class="edit-group">' + groupOptionsHtml(group_cn) + '</select></td>' +
       '<td class="actions-cell">' +
         '<button class="btn-save" data-id="' + entry.id + '"><span class="material-icons md-18">save</span> Save</button>' +
@@ -146,8 +146,8 @@
           entry.group_cn = newGroup;
           renderRowView(tr, entry);
         } else {
-          var b = await res.json();
-          alert(b.error || "Update failed");
+          var b = await res.json().catch(function () { return {}; });
+          alert(b.error || ("Update failed (" + res.status + ")"));
           saveBtn.disabled = false;
           saveBtn.innerHTML = '<span class="material-icons md-18">save</span> Save';
         }
@@ -307,14 +307,14 @@
   addBtn.addEventListener("click", async function () {
     var title = document.getElementById("f-title").value.trim();
     var username = document.getElementById("f-username").value.trim();
-    var url = document.getElementById("f-url").value.trim();
+    var fUrl = document.getElementById("f-url").value.trim();
     var password = document.getElementById("f-password").value.trim();
     var group_cn = document.getElementById("f-group").value;
     if (!title || !username || !password) { alert("Title, username, and password are required"); return; }
     var res = await fetch(url("/api/passwords"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title, username: username, url: url, password: password, group_cn: group_cn }),
+      body: JSON.stringify({ title: title, username: username, url: fUrl, password: password, group_cn: group_cn }),
     });
     if (res.ok) {
       document.getElementById("f-title").value = "";

@@ -27,40 +27,110 @@ function getCookie(name: string, cookieHeader: string | null): string | null {
   return null;
 }
 
-function isSameOrigin(request: Request): boolean {
-  const host = request.headers.get("Host");
-  if (!host) return false;
+/**
+ * HTTP authority ("host[:port]", possibly "[v6]:port") into a
+ * { hostname, port } pair so origins can be compared.
+ */
+function parseAuthority(authority: string): { hostname: string; port: string } {
+  try {
+    const u = new URL("http://" + authority);
+    return { hostname: u.hostname.toLowerCase(), port: u.port || "" };
+  } catch {
+    // Malformed authority — split host:port manually (handles bare [v6]).
+    const s = authority.trim();
+    if (s.startsWith("[")) {
+      const end = s.indexOf("]");
+      if (end !== -1) {
+        const hostname = s.slice(0, end + 1).toLowerCase();
+        const port = s[end + 1] === ":" ? s.slice(end + 2) : "";
+        return { hostname, port };
+      }
+    }
+    const idx = s.lastIndexOf(":");
+    if (idx !== -1 && s.indexOf(":") === idx) {
+      return { hostname: s.slice(0, idx).toLowerCase(), port: s.slice(idx + 1) };
+    }
+    return { hostname: s.toLowerCase(), port: "" };
+  }
+}
 
+/** Normalize a port against the protocol's default so ":80"/":443" match "". */
+function portsEqual(a: string, b: string, protocol: string): boolean {
+  const norm = (p: string) => (!p ? (protocol === "https:" ? "443" : "80") : p);
+  return norm(a) === norm(b);
+}
+
+/**
+ * Reconstruct the authority the client actually used.
+ */
+function requestAuthority(request: Request): { authority: string; protocol: string } {
+  const xfh = request.headers.get("X-Forwarded-Host");
+  if (xfh) {
+    const host = (xfh.split(",")[0] || "").trim();
+    if (host) {
+      const proto = (request.headers.get("X-Forwarded-Proto") || "http").split(",")[0].trim().toLowerCase();
+      return { authority: host, protocol: proto === "https" ? "https:" : "http:" };
+    }
+  }
+  const fwd = request.headers.get("Forwarded");
+  if (fwd) {
+    const hostMatch = fwd.match(/(?:^|;)\s*host\s*=\s*"?([^";,]+)"?/i);
+    if (hostMatch?.[1]?.trim()) {
+      const protoMatch = fwd.match(/(?:^|;)\s*proto\s*=\s*"?([^";,]+)"?/i);
+      const proto = (protoMatch?.[1] || "http").trim().toLowerCase();
+      return { authority: hostMatch[1].trim(), protocol: proto === "https" ? "https:" : "http:" };
+    }
+  }
+  return { authority: request.headers.get("Host") || "", protocol: "http:" };
+}
+
+function isSameOrigin(request: Request): boolean {
   // Use Origin when present; fall back to Referer (full URL) for clients that
   // omit Origin on state-changing requests.
   const origin = request.headers.get("Origin") || request.headers.get("Referer");
-  if (!origin) {
-    // Neither Origin nor Referer present — cannot verify the request is
-    // same-origin, so deny it.
-    return false;
-  }
+  if (!origin) return false;
+
+  let originUrl: URL;
   try {
-    const originUrl = new URL(origin);
-    return originUrl.host === host && (originUrl.protocol === "https:" || originUrl.protocol === "http:");
+    originUrl = new URL(origin);
   } catch {
     return false;
   }
+  if (originUrl.protocol !== "https:" && originUrl.protocol !== "http:") return false;
+
+  const { authority, protocol } = requestAuthority(request);
+  if (!authority) return false;
+
+  const expected = parseAuthority(authority);
+  const actual = parseAuthority(originUrl.host);
+  return actual.hostname === expected.hostname && portsEqual(actual.port, expected.port, protocol);
 }
 
 /**
  * CSRF guard for state-changing requests:
  * - Must be application/json content type
- * - Origin (if present) must match our host
  */
 function csrfGuard(handler: Handler): Handler {
   return (ctx: RequestContext) => {
     const method = ctx.request.method;
     if (method === "POST" || method === "DELETE" || method === "PUT" || method === "PATCH") {
+      const pathname = new URL(ctx.request.url).pathname;
       const contentType = ctx.request.headers.get("Content-Type") || "";
       if (!contentType.includes("application/json")) {
+        console.warn(`[REJECT] ${method} ${pathname} — Content-Type "${contentType}" is not application/json`);
         return jsonResponse({ error: "Content-Type must be application/json" }, 415);
       }
-      if (!isSameOrigin(ctx.request)) {
+
+      const origin = ctx.request.headers.get("Origin") || ctx.request.headers.get("Referer");
+      console.log(
+        `[CSRF] ${method} ${pathname} origin="${origin || "(none)"}" host="${ctx.request.headers.get("Host") || ""}"` +
+          ` xfh="${ctx.request.headers.get("X-Forwarded-Host") || ""}"`
+      );
+      if (origin && !isSameOrigin(ctx.request)) {
+        console.warn(
+          `[REJECT] ${method} ${pathname} cross-origin origin="${origin}" host="${ctx.request.headers.get("Host") || ""}"` +
+            ` xfh="${ctx.request.headers.get("X-Forwarded-Host") || ""}"`
+        );
         return jsonResponse({ error: "Cross-origin request rejected" }, 403);
       }
     }

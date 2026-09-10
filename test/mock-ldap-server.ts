@@ -77,7 +77,7 @@ server.search("dc=test,dc=local", (req: any, res: any, next: any) => {
       uid: username,
       cn: username.charAt(0).toUpperCase() + username.slice(1),
       sn: "User",
-      memberof: user.groups,
+      memberOf: user.groups,
     },
   }, true);
 
