@@ -1,0 +1,274 @@
+/* passwordeeri — minimal, plain, no gradients, no shadows, no animations */
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #555555;
+  --border: #cccccc;
+  --accent: #2255aa;
+  --accent-hover: #1a4078;
+  --danger: #aa2222;
+  --row-alt: #f5f5f5;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* ---------- Login page ---------- */
+
+.login-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+.login-box {
+  width: 320px;
+  border: 1px solid var(--border);
+  padding: 24px;
+}
+
+.login-box h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.login-box .field {
+  margin-bottom: 12px;
+}
+
+.login-box label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.login-box input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.login-box input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.login-box button {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.login-box button:hover {
+  background: var(--accent-hover);
+}
+
+.login-box button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.error-msg {
+  margin-top: 10px;
+  color: var(--danger);
+  font-size: 13px;
+  border: 1px solid var(--danger);
+  padding: 6px 8px;
+}
+
+/* ---------- Dashboard ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: #fafafa;
+}
+
+.topbar .app-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.topbar .user-info {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.btn-logout {
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+}
+
+.btn-logout:hover {
+  background: var(--row-alt);
+}
+
+.container {
+  max-width: 900px;
+  margin: 24px auto;
+  padding: 0 20px;
+}
+
+.container h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+/* Add form */
+
+.add-form {
+  border: 1px solid var(--border);
+  padding: 14px;
+  margin-bottom: 20px;
+}
+
+.add-form h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.form-row input,
+.form-row select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  min-width: 120px;
+  flex: 1;
+}
+
+.form-row input:focus,
+.form-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.form-row button {
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.form-row button:hover {
+  background: var(--accent-hover);
+}
+
+/* Table */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+}
+
+th,
+td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+thead th {
+  background: #fafafa;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+tbody tr:nth-child(even) {
+  background: var(--row-alt);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+td.url-cell {
+  word-break: break-all;
+}
+
+.btn-copy,
+.btn-del {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  cursor: pointer;
+  margin-right: 4px;
+}
+
+.btn-copy:hover {
+  background: var(--row-alt);
+}
+
+.btn-del {
+  color: var(--danger);
+}
+
+.btn-del:hover {
+  background: var(--danger);
+  color: #ffffff;
+  border-color: var(--danger);
+}
+
+@media (max-width: 600px) {
+  .form-row {
+    flex-direction: column;
+  }
+  .form-row input,
+  .form-row select,
+  .form-row button {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+  .topbar {
+    flex-wrap: wrap;
+  }
+}

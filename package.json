@@ -1,0 +1,19 @@
+{
+  "name": "passwordeeri",
+  "version": "1.0.0",
+  "description": "Minimal LDAP-backed password manager",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "test:mock": "bun run test/mock-ldap-server.ts",
+    "test:app": "bun --env-file=test/config.env run src/index.ts"
+  },
+  "dependencies": {
+    "ldapjs": "^3.0.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/ldapjs": "^3.0.1"
+  }
+}
