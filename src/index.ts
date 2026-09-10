@@ -53,12 +53,29 @@ router.get("/dashboard", requireSession(async (ctx) => {
 
   // Super users see all groups in the dropdown so they can create/edit in any
   // group. Merge LDAP group names with existing DB groups for safety.
+  // Group list for the dropdown.
+  // - Normal users: only their own groups (which are whitelisted — they passed LOGIN_GROUPS).
+  // - Super users: all whitelisted groups so they can create in any allowed group.
+  //   If no whitelist is set, they get all LDAP + DB groups.
+  // - When LOGIN_GROUPS is configured, the dropdown is limited to those groups.
+  // - User's own groups are listed FIRST for default selection.
+  const loginGroups = getConfig().LOGIN_GROUPS;
   let availableGroups = ctx.userGroups;
+
   if (ctx.isSuper) {
-    const ldapGroups = await getAllGroupNames();
-    const dbGroups = getDistinctGroupNames();
-    const merged = [...new Set([...ldapGroups, ...dbGroups, ...ctx.userGroups])].filter(Boolean) as string[];
-    availableGroups = merged.length > 0 ? merged : ctx.userGroups;
+    if (loginGroups.length > 0) {
+      // Own groups first (default selection), then remaining whitelisted groups
+      availableGroups = [...new Set([...ctx.userGroups, ...loginGroups])] as string[];
+    } else {
+      const ldapGroups = await getAllGroupNames();
+      const dbGroups = getDistinctGroupNames();
+      const merged = [...new Set([...ctx.userGroups, ...ldapGroups, ...dbGroups])].filter(Boolean) as string[];
+      availableGroups = merged.length > 0 ? merged : ctx.userGroups;
+    }
+  } else if (loginGroups.length > 0) {
+    // Non-super users: only their own whitelisted groups
+    const lowerWhitelist = loginGroups.map((g) => g.toLowerCase());
+    availableGroups = ctx.userGroups.filter((g) => lowerWhitelist.includes(g.toLowerCase()));
   }
 
   // Inject groups as JSON for the external script
@@ -84,20 +101,53 @@ router.get("/dashboard", requireSession(async (ctx) => {
     </form>
   </div>
   <div class="container">
-    <h2>Passwords</h2>
+    <div class="pw-header">
+      <h2>Passwords</h2>
+      <div class="search-wrapper">
+        <span class="material-icons search-icon">search</span>
+        <input type="text" id="search-bar" class="search-bar" placeholder="Search by name, username or URL&hellip;" autocomplete="off">
+        <button id="btn-clear-search" class="btn-clear-search" style="display:none" title="Clear search"><span class="material-icons md-18">close</span></button>
+      </div>
+    </div>
 
-    <button id="btn-toggle-add" class="btn-toggle">+ Add password</button>
+    <button id="btn-toggle-add" class="btn-toggle"><span class="material-icons md-18">add</span> Add entry</button>
 
     <div class="add-form" id="add-form" style="display:none">
-      <h3>Add password</h3>
-      <div class="form-row">
-        <input type="text" id="f-title" placeholder="Title" autocomplete="off" required>
-        <input type="text" id="f-username" placeholder="Username" autocomplete="off" required>
-        <input type="text" id="f-url" placeholder="URL (optional)" autocomplete="off">
-        <input type="password" id="f-password" placeholder="Password" autocomplete="new-password" required>
-        <select id="f-group"></select>
-        <button id="btn-add">Add</button>
+      <div class="add-form-fields">
+        <div class="field-group">
+          <label>Title <span class="hint">(required)</span></label>
+          <input type="text" id="f-title" placeholder="e.g. Company Email" autocomplete="off" required>
+        </div>
+        <div class="field-group">
+          <label>Username <span class="hint">(required)</span></label>
+          <input type="text" id="f-username" placeholder="e.g. john@example.com" autocomplete="off" required>
+        </div>
+        <div class="field-group">
+          <label>Password <span class="hint">(required)</span></label>
+          <input type="password" id="f-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" autocomplete="new-password" required>
+        </div>
+        <div class="field-group">
+          <label>URL <span class="hint">(optional)</span></label>
+          <input type="text" id="f-url" placeholder="https://example.com" autocomplete="off">
+        </div>
+        <div class="field-group">
+          <label>Group</label>
+          <select id="f-group"></select>
+        </div>
+        <button id="btn-add" class="btn-add-form"><span class="material-icons md-18">add_circle_outline</span> Add</button>
       </div>
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display:none">
+      <span class="material-icons empty-icon">vpn_key</span>
+      <p class="empty-title">No passwords yet</p>
+      <p class="empty-desc">Click <strong>Add entry</strong> above to store your first password.</p>
+    </div>
+
+    <div id="no-results" class="empty-state" style="display:none">
+      <span class="material-icons empty-icon">search_off</span>
+      <p class="empty-title">No matching entries</p>
+      <p class="empty-desc">Try a different search term or <a href="#" id="clear-search-link">clear the filter</a>.</p>
     </div>
 
     <table id="pw-table">

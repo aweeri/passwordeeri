@@ -160,6 +160,99 @@ a {
   margin-bottom: 16px;
 }
 
+/* Page header row: title + search */
+.pw-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pw-header h2 {
+  margin-bottom: 0;
+}
+
+.search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 260px;
+  max-width: 380px;
+  flex: 1;
+}
+
+.search-icon {
+  position: absolute;
+  left: 8px;
+  font-size: 18px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.search-bar {
+  width: 100%;
+  padding: 7px 30px 7px 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #ffffff;
+}
+
+.search-bar:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.btn-clear-search {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.btn-clear-search:hover {
+  background: var(--row-alt);
+  color: var(--fg);
+}
+
+/* Empty / no-results states */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  border: 1px dashed var(--border);
+  margin-bottom: 20px;
+  color: var(--muted);
+}
+
+.empty-icon {
+  font-size: 40px;
+  color: #bbbbbb;
+  margin-bottom: 8px;
+}
+
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+
+.empty-desc {
+  font-size: 13px;
+}
+
 /* Toggle button to show/hide add form */
 
 .btn-toggle {
@@ -184,19 +277,63 @@ a {
 }
 
 /* Add form */
-
 .add-form {
   border: 1px solid var(--border);
   padding: 14px;
   margin-bottom: 20px;
 }
 
-.add-form h3 {
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.add-form-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-group label {
+  font-size: 12px;
   color: var(--muted);
-  margin-bottom: 10px;
+}
+
+.field-group .hint {
+  font-size: 11px;
+  color: #999999;
+}
+
+.field-group input,
+.field-group select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.field-group input:focus,
+.field-group select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.btn-add-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  align-self: end;
+}
+
+.btn-add-form:hover {
+  background: var(--accent-hover);
 }
 
 .form-row {

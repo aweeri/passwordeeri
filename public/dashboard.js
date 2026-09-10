@@ -15,10 +15,11 @@
   // --- Populate the group dropdown ---
   const sel = document.getElementById("f-group");
   if (sel) {
-    groups.forEach((g) => {
+    groups.forEach((g, i) => {
       const opt = document.createElement("option");
       opt.value = g;
       opt.textContent = g;
+      if (i === 0) opt.selected = true;
       sel.appendChild(opt);
     });
   }
@@ -196,6 +197,74 @@
     });
   }
 
+  // --- Search state ---
+  var searchQuery = "";
+  var allEntries = [];
+
+  function matchesSearch(entry) {
+    if (!searchQuery) return true;
+    var q = searchQuery.toLowerCase();
+    return (
+      (entry.title || "").toLowerCase().indexOf(q) !== -1 ||
+      (entry.username || "").toLowerCase().indexOf(q) !== -1 ||
+      (entry.url || "").toLowerCase().indexOf(q) !== -1
+    );
+  }
+
+  function renderTable() {
+    var tbody = document.getElementById("pw-body");
+    var emptyState = document.getElementById("empty-state");
+    var noResults = document.getElementById("no-results");
+    var filtered = allEntries.filter(matchesSearch);
+
+    tbody.innerHTML = "";
+
+    // Handle empty/not-found states
+    if (allEntries.length === 0) {
+      if (emptyState) emptyState.style.display = "block";
+      if (noResults) noResults.style.display = "none";
+      return;
+    }
+    if (filtered.length === 0) {
+      if (emptyState) emptyState.style.display = "none";
+      if (noResults) noResults.style.display = "block";
+      return;
+    }
+    if (emptyState) emptyState.style.display = "none";
+    if (noResults) noResults.style.display = "none";
+
+    for (var i = 0; i < filtered.length; i++) {
+      var tr = makeRow(filtered[i]);
+      tbody.appendChild(tr);
+    }
+  }
+
+  function onSearchInput() {
+    searchQuery = document.getElementById("search-bar").value;
+    var clearBtn = document.getElementById("btn-clear-search");
+    if (clearBtn) clearBtn.style.display = searchQuery ? "inline-flex" : "none";
+    renderTable();
+  }
+
+  function clearSearch() {
+    searchQuery = "";
+    var searchEl = document.getElementById("search-bar");
+    if (searchEl) searchEl.value = "";
+    var clearBtn = document.getElementById("btn-clear-search");
+    if (clearBtn) clearBtn.style.display = "none";
+    renderTable();
+  }
+
+  function initSearch() {
+    var searchEl = document.getElementById("search-bar");
+    if (!searchEl) return;
+    searchEl.addEventListener("input", onSearchInput);
+    var clearBtn = document.getElementById("btn-clear-search");
+    if (clearBtn) clearBtn.addEventListener("click", clearSearch);
+    var clearLink = document.getElementById("clear-search-link");
+    if (clearLink) clearLink.addEventListener("click", function (e) { e.preventDefault(); clearSearch(); });
+  }
+
   async function loadPasswords() {
     var res = await fetch("/api/passwords");
     if (!res.ok) { document.getElementById("pw-body").innerHTML = '<tr><td colspan="5">Failed to load</td></tr>'; return; }
@@ -204,14 +273,8 @@
     for (var id of [...passwordMap.keys()]) {
       if (!ids.has(id)) passwordMap.delete(id);
     }
-
-    var tbody = document.getElementById("pw-body");
-    tbody.innerHTML = "";
-    for (var i = 0; i < data.length; i++) {
-      var entry = data[i];
-      var tr = makeRow(entry);
-      tbody.appendChild(tr);
-    }
+    allEntries = data;
+    renderTable();
   }
 
   // --- Toggle the add form ---
@@ -257,6 +320,9 @@
       alert(b.error || "Failed to add");
     }
   });
+
+  // Init search bar
+  initSearch();
 
   // Initial load
   loadPasswords();
