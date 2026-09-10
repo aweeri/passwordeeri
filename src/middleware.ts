@@ -119,6 +119,10 @@ export function requireSession(handler: Handler): Handler {
     ctx.session = session;
     ctx.userGroups = parseGroups(session);
     ctx.username = session.username;
+
+    // Fire-and-forget session freshness check (same as requireSessionJson)
+    maybeRefresh(ctx);
+
     return handler(ctx);
   };
 }

@@ -1,61 +1,15 @@
-import { loadConfig, getConfig } from "./config";
-
-const APP_NAME = () => getConfig().APP_NAME;
-import { getDb, getSession } from "./db";
-import { Router } from "./router";
-import { requireSession, requireSessionJson } from "./middleware";
-import { getLoginPage, handleLogin, handleLogout } from "./routes/auth";
-import { listPasswordsJson, createPasswordJson, deletePasswordJson } from "./routes/passwords";
-
-// Load config and init DB at startup
-loadConfig();
-getDb();
-
-const router = new Router();
-
-// Security headers applied to all HTML responses
-function securityHeaders(contentType: string): Record<string, string> {
-  return {
-    "Content-Type": contentType,
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "Referrer-Policy": "same-origin",
-  };
-}
-
-// -- Auth routes --
-router.get("/", (ctx) => {
-  const cookie = ctx.request.headers.get("Cookie");
-  const match = cookie?.match(/\bsession=([^;]+)/);
-  if (match) {
-    return new Response(null, { status: 302, headers: { Location: "/dashboard" } });
-  }
-  return new Response(null, { status: 302, headers: { Location: "/login" } });
-});
-
-router.get("/login", getLoginPage);
-router.post("/login", handleLogin);
-router.get("/logout", handleLogout);
-
-// -- Dashboard (session required) --
-router.get("/dashboard", requireSession((ctx) => {
-  // Inject groups as JSON for the external script
-  const groupsJson = JSON.stringify(ctx.userGroups)
-    .replace(/</g, "\\u003c") // neutralize any </script> breakout
-    .replace(/>/g, "\\u003e");
-
-  const html = `<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHtml(APP_NAME())}</title>
+<title>SATpass</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div class="topbar">
-    <span class="app-name">${escapeHtml(APP_NAME())}</span>
-    <span class="user-info">${escapeHtml(ctx.username)}</span>
+    <span class="app-name">SATpass</span>
+    <span class="user-info">admin</span>
     <a href="/logout" class="btn-logout">Log out</a>
   </div>
   <div class="container">
@@ -90,7 +44,9 @@ router.get("/dashboard", requireSession((ctx) => {
   </div>
 
   <script>
-    window.__GROUPS__ = ${groupsJson};
+    // All dashboard logic inlined — never cached, always fresh.
+    // (The external dashboard.js was getting cache-locked in browsers.)
+    window.__GROUPS__ = ["lldap_admin"];
     (function() {
       var passwordMap = {};
       var groups = window.__GROUPS__ || [];
@@ -107,14 +63,17 @@ router.get("/dashboard", requireSession((ctx) => {
       }
 
       // --- Escape HTML for safe rendering ---
+      // NOTE: hex escapes are used instead of HTML entities because this JS
+      // lives inside a <script> tag — the browser HTML-decodes entities like
+      // < inside script blocks, which would corrupt the string literals.
       function esc(s) {
         if (s === null || s === undefined) return "";
         return String(s)
-          .replace(/&/g, "\x26amp;")
-          .replace(/</g, "\x26lt;")
-          .replace(/>/g, "\x26gt;")
-          .replace(/\x22/g, "\x26quot;")
-          .replace(/'/g, "\x26#39;");
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
       }
 
       // --- Render one row ---
@@ -232,73 +191,4 @@ router.get("/dashboard", requireSession((ctx) => {
     })();
   </script>
 </body>
-</html>`;
-
-  return new Response(html, {
-    headers: {
-      ...securityHeaders("text/html; charset=utf-8"),
-      "Cache-Control": "no-cache, no-store",
-      "Content-Security-Policy":
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'",
-    },
-  });
-}));
-
-// -- API routes (session required, JSON responses) --
-router.get("/api/passwords", requireSessionJson(listPasswordsJson));
-router.post("/api/passwords", requireSessionJson(createPasswordJson));
-router.delete("/api/passwords/:id", requireSessionJson(deletePasswordJson));
-
-// -- Static files (public/*) --
-router.get("/styles.css", () => {
-  const file = Bun.file("public/styles.css");
-  return new Response(file, {
-    headers: {
-      "Content-Type": "text/css; charset=utf-8",
-      "Cache-Control": "no-cache",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-});
-router.get("/dashboard.js", () => {
-  const file = Bun.file("public/dashboard.js");
-  return new Response(file, {
-    headers: {
-      "Content-Type": "application/javascript; charset=utf-8",
-      "Cache-Control": "no-cache",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-});
-router.get("/login.js", () => {
-  const file = Bun.file("public/login.js");
-  return new Response(file, {
-    headers: {
-      "Content-Type": "application/javascript; charset=utf-8",
-      "Cache-Control": "no-cache",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-});
-
-// -- Start server --
-const cfg = getConfig();
-const server = Bun.serve({
-  port: cfg.PORT,
-  async fetch(request) {
-    const response = await router.resolve(request);
-    if (response) return response;
-    return new Response("Not found", { status: 404 });
-  },
-});
-
-console.log(`${APP_NAME()} running on http://localhost:${server.port}`);
-
-function escapeHtml(s: string): string {
-  return String(s)
-    .replace(/&/g, "\x26amp;")
-    .replace(/</g, "\x26lt;")
-    .replace(/>/g, "\x26gt;")
-    .replace(/"/g, "\x26quot;")
-    .replace(/'/g, "\x26#39;");
-}
+</html>

@@ -145,6 +145,27 @@ a {
   margin-bottom: 16px;
 }
 
+/* Toggle button to show/hide add form */
+
+.btn-toggle {
+  display: inline-block;
+  margin-bottom: 16px;
+  padding: 6px 12px;
+  background: #ffffff;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 3px;
+  line-height: 1.4;
+}
+
+.btn-toggle:hover {
+  background: var(--row-alt);
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
+}
+
 /* Add form */
 
 .add-form {
