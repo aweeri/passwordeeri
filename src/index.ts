@@ -1,4 +1,6 @@
 import { loadConfig, getConfig } from "./config";
+
+const APP_NAME = () => getConfig().APP_NAME;
 import { getDb, getSession } from "./db";
 import { Router } from "./router";
 import { requireSession, requireSessionJson } from "./middleware";
@@ -47,12 +49,12 @@ router.get("/dashboard", requireSession((ctx) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>passwordeeri</title>
+<title>${escapeHtml(APP_NAME())}</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div class="topbar">
-    <span class="app-name">passwordeeri</span>
+    <span class="app-name">${escapeHtml(APP_NAME())}</span>
     <span class="user-info">${escapeHtml(ctx.username)}</span>
     <a href="/logout" class="btn-logout">Log out</a>
   </div>
@@ -149,7 +151,7 @@ const server = Bun.serve({
   },
 });
 
-console.log(`passwordeeri running on http://localhost:${server.port}`);
+console.log(`${APP_NAME()} running on http://localhost:${server.port}`);
 
 function escapeHtml(s: string): string {
   return String(s)

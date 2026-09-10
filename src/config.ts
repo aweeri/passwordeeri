@@ -1,4 +1,5 @@
 export interface Config {
+  APP_NAME: string;
   PORT: number;
   SESSION_SECRET: string;
   MASTER_KEY: string;
@@ -65,6 +66,7 @@ export function loadConfig(): Config {
   }
 
   config = {
+    APP_NAME: envOpt("APP_NAME", "passwordeeri"),
     PORT: envNum("PORT", 3000),
     SESSION_SECRET: sessionSecret,
     MASTER_KEY: masterKey,

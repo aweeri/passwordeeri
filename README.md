@@ -52,6 +52,7 @@ Put an nginx/Caddy in front with HTTPS if prod. Enable `COOKIE_SECURE=true` in t
 
 | Var | What |
 |---|---|
+| `APP_NAME` | brand name shown in title/heading/topbar (default `passwordeeri`) |
 | `LDAP_URL` | `ldap://host:389` or `ldaps://` |
 | `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account creds |
 | `LDAP_SEARCH_BASE` | e.g. `dc=example,dc=com` |

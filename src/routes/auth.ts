@@ -4,6 +4,17 @@ import { createSession, deleteSession, refreshSessionGroups, logAudit } from "..
 import { getConfig } from "../config";
 import type { RequestContext } from "../middleware";
 
+const APP_NAME = () => getConfig().APP_NAME;
+
+function escapeAttr(s: string): string {
+  return s
+    .replace(/&/g, "\x26amp;")
+    .replace(/</g, "\x26lt;")
+    .replace(/>/g, "\x26gt;")
+    .replace(/"/g, "\x26quot;")
+    .replace(/'/g, "\x26#39;");
+}
+
 // Simple in-memory rate limiter for login attempts
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
@@ -42,17 +53,18 @@ function injectSecurityHeaders(headers: Record<string, string>): Record<string, 
 }
 
 export function getLoginPage(_ctx: RequestContext): Response {
+  const name = escapeAttr(APP_NAME());
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>passwordeeri</title>
+<title>${name}</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="login-page">
   <div class="login-box">
-    <h1>passwordeeri</h1>
+    <h1>${name}</h1>
     <form id="login-form">
       <div class="field">
         <label for="username">Username</label>
