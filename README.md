@@ -1,3 +1,8 @@
+## Setup
+1. Copy `config.env.template` to `config.env`
+2. Fill in the values in `config.env`
+3. Run the application
+
 # passwordeeri
 
 Tiny self-hosted vault that logs you in through your org's LDAP and only shows passwords for groups you're in.

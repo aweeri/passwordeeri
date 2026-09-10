@@ -2,7 +2,7 @@
 FROM oven/bun:1-alpine AS deps
 WORKDIR /app
 COPY package.json ./
-RUN bun install --production
+RUN bun install --production --no-cache
 
 # Stage 2: Runtime
 FROM oven/bun:1-alpine

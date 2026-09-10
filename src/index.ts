@@ -5,7 +5,7 @@ import { getDb, getSession } from "./db";
 import { Router } from "./router";
 import { requireSession, requireSessionJson } from "./middleware";
 import { getLoginPage, handleLogin, handleLogout } from "./routes/auth";
-import { listPasswordsJson, createPasswordJson, deletePasswordJson } from "./routes/passwords";
+import { listPasswordsJson, createPasswordJson, deletePasswordJson, decryptPasswordJson } from "./routes/passwords";
 
 // Load config and init DB at startup
 loadConfig();
@@ -20,22 +20,28 @@ function securityHeaders(contentType: string): Record<string, string> {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   };
 }
 
 // -- Auth routes --
 router.get("/", (ctx) => {
   const cookie = ctx.request.headers.get("Cookie");
-  const match = cookie?.match(/\bsession=([^;]+)/);
+  // Token must be exactly 64 hex characters (32 bytes) — matches randomBytes(32).toString("hex")
+  const match = cookie?.match(/\bsession=([a-f0-9]{64})\b/i);
   if (match) {
     return new Response(null, { status: 302, headers: { Location: "/dashboard" } });
+  }
+  // If a session cookie exists but the token is malformed, reject with 401
+  if (cookie?.match(/\bsession=/)) {
+    return new Response("Unauthorized", { status: 401 });
   }
   return new Response(null, { status: 302, headers: { Location: "/login" } });
 });
 
 router.get("/login", getLoginPage);
 router.post("/login", handleLogin);
-router.get("/logout", handleLogout);
+router.post("/logout", handleLogout);
 
 // -- Dashboard (session required) --
 router.get("/dashboard", requireSession((ctx) => {
@@ -56,7 +62,9 @@ router.get("/dashboard", requireSession((ctx) => {
   <div class="topbar">
     <span class="app-name">${escapeHtml(APP_NAME())}</span>
     <span class="user-info">${escapeHtml(ctx.username)}</span>
-    <a href="/logout" class="btn-logout">Log out</a>
+    <form method="post" action="/logout" class="logout-form">
+      <button type="submit" class="btn-logout">Log out</button>
+    </form>
   </div>
   <div class="container">
     <h2>Passwords</h2>
@@ -92,6 +100,8 @@ router.get("/dashboard", requireSession((ctx) => {
   <script>
     window.__GROUPS__ = ${groupsJson};
     (function() {
+      // passwordMap: id -> plaintext password (never rendered).
+      // Populated ONLY when the user explicitly requests decryption.
       var passwordMap = {};
       var groups = window.__GROUPS__ || [];
 
@@ -129,16 +139,45 @@ router.get("/dashboard", requireSession((ctx) => {
           '<td class="url-cell">' + urlCell + "</td>" +
           "<td>" + esc(entry.group_cn) + "</td>" +
           "<td>" +
-            '<button class="btn-copy" data-id="' + entry.id + '">Copy</button>' +
+            '<button class="btn-decrypt" data-id="' + entry.id + '">Show</button>' +
+            '<button class="btn-copy" data-id="' + entry.id + '" disabled>Copy</button>' +
             '<button class="btn-del" data-id="' + entry.id + '">Delete</button>' +
           "</td>";
         return tr;
       }
 
+      // --- On-demand decryption ---
+      async function fetchDecrypted(entryId) {
+        if (passwordMap[entryId] !== undefined) return passwordMap[entryId];
+        var res = await fetch("/api/passwords/" + entryId + "/decrypt");
+        if (!res.ok) {
+          var b = await res.json().catch(function() { return {}; });
+          throw new Error(b.error || "Decrypt failed");
+        }
+        var data = await res.json();
+        passwordMap[entryId] = data.password;
+        return data.password;
+      }
+
       // --- Bind row actions ---
       function bindRowActions(tr, entry) {
+        var decryptBtn = tr.querySelector(".btn-decrypt");
         var copyBtn = tr.querySelector(".btn-copy");
         var delBtn = tr.querySelector(".btn-del");
+
+        decryptBtn.addEventListener("click", async function() {
+          decryptBtn.disabled = true;
+          decryptBtn.textContent = "\u2026";
+          try {
+            await fetchDecrypted(entry.id);
+            decryptBtn.textContent = "Shown";
+            copyBtn.disabled = false;
+            copyBtn.textContent = "Copy";
+          } catch (e) {
+            decryptBtn.textContent = "Retry";
+            alert(e.message || "Failed to decrypt");
+          }
+        });
 
         copyBtn.addEventListener("click", async function() {
           var pw = passwordMap[entry.id];
@@ -156,6 +195,7 @@ router.get("/dashboard", requireSession((ctx) => {
           if (!confirm("Delete this password?")) return;
           var res = await fetch("/api/passwords/" + entry.id, { method: "DELETE", headers: { "Content-Type": "application/json" } });
           if (res.ok) {
+            delete passwordMap[entry.id];
             loadPasswords();
           } else {
             var b = await res.json();
@@ -164,7 +204,7 @@ router.get("/dashboard", requireSession((ctx) => {
         });
       }
 
-      // --- Load the password table ---
+      // --- Load the password table (encrypted blobs only) ---
       async function loadPasswords() {
         var res = await fetch("/api/passwords");
         if (!res.ok) {
@@ -172,11 +212,16 @@ router.get("/dashboard", requireSession((ctx) => {
           return;
         }
         var data = await res.json();
-        passwordMap = {};
+        // Keep cached decryptions for entries that still exist; drop removed ones
+        var ids = {};
+        data.forEach(function(e) { ids[e.id] = true; });
+        Object.keys(passwordMap).forEach(function(id) {
+          if (!ids[id]) delete passwordMap[id];
+        });
+
         var tbody = document.getElementById("pw-body");
         tbody.innerHTML = "";
         data.forEach(function(entry) {
-          passwordMap[entry.id] = entry.password;
           var tr = makeRow(entry);
           bindRowActions(tr, entry);
           tbody.appendChild(tr);
@@ -239,7 +284,7 @@ router.get("/dashboard", requireSession((ctx) => {
       ...securityHeaders("text/html; charset=utf-8"),
       "Cache-Control": "no-cache, no-store",
       "Content-Security-Policy":
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'",
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'strict-dynamic'; object-src 'none'; frame-ancestors 'none'",
     },
   });
 }));
@@ -247,6 +292,7 @@ router.get("/dashboard", requireSession((ctx) => {
 // -- API routes (session required, JSON responses) --
 router.get("/api/passwords", requireSessionJson(listPasswordsJson));
 router.post("/api/passwords", requireSessionJson(createPasswordJson));
+router.get("/api/passwords/:id/decrypt", requireSessionJson(decryptPasswordJson));
 router.delete("/api/passwords/:id", requireSessionJson(deletePasswordJson));
 
 // -- Static files (public/*) --
@@ -285,8 +331,8 @@ router.get("/login.js", () => {
 const cfg = getConfig();
 const server = Bun.serve({
   port: cfg.PORT,
-  async fetch(request) {
-    const response = await router.resolve(request);
+  async fetch(request, server) {
+    const response = await router.resolve(request, server);
     if (response) return response;
     return new Response("Not found", { status: 404 });
   },

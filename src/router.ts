@@ -1,3 +1,4 @@
+import type { Server } from "bun";
 import type { RequestContext } from "./middleware";
 
 type HttpMethod = "GET" | "POST" | "DELETE" | "PUT" | "PATCH";
@@ -36,7 +37,7 @@ export class Router {
     this.routes.push({ method, pattern: new RegExp(`^${regexStr}$`), paramNames, handler });
   }
 
-  async resolve(request: Request): Promise<Response | null> {
+  async resolve(request: Request, server?: Server): Promise<Response | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
     const method = request.method as HttpMethod;
@@ -51,7 +52,7 @@ export class Router {
         params[route.paramNames[i]] = decodeURIComponent(match[i + 1]);
       }
 
-      const ctx: RequestContext = { request, params, userGroups: [], username: "" };
+      const ctx: RequestContext = { request, params, userGroups: [], username: "", server };
       return route.handler(ctx);
     }
 

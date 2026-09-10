@@ -1,4 +1,4 @@
-import { listPasswordsForGroups, getPasswordById, createPassword, deletePassword, logAudit } from "../db";
+import { listPasswordsForGroups, getPasswordById, createPassword, deletePassword, logAudit, getDb } from "../db";
 import { encrypt, decrypt } from "../crypto";
 import type { RequestContext } from "../middleware";
 
@@ -7,27 +7,163 @@ const MAX_USERNAME = 200;
 const MAX_URL = 2000;
 const MAX_PASSWORD = 10000;
 
+// ── Rate limiting for CRUD operations ──
+
+const CRUD_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute window
+const CRUD_RATE_LIMIT_CLEANUP_MS = 60_000; // prune expired entries every 60 seconds
+
+const crudAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function getCrudClientIP(ctx: RequestContext): string {
+  const server = ctx.server;
+  if (server) {
+    const addr = server.requestIP(ctx.request);
+    if (addr) return addr.address;
+  }
+  return "unknown";
+}
+
+function checkCrudRateLimit(ctx: RequestContext, limit: number): { allowed: boolean; retryAfter?: number } {
+  const ip = getCrudClientIP(ctx);
+  const now = Date.now();
+  const record = crudAttempts.get(ip);
+
+  if (!record || record.resetAt < now) {
+    crudAttempts.set(ip, { count: 1, resetAt: now + CRUD_RATE_LIMIT_WINDOW_MS });
+    return { allowed: true };
+  }
+
+  if (record.count >= limit) {
+    const retryAfter = Math.ceil((record.resetAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+
+  record.count++;
+  return { allowed: true };
+}
+
+// Periodic cleanup of expired entries to prevent unbounded memory growth.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of crudAttempts) {
+    if (record.resetAt < now) {
+      crudAttempts.delete(ip);
+    }
+  }
+}, CRUD_RATE_LIMIT_CLEANUP_MS);
+
+// ── URL sanitization ──
+
+function sanitizeUrl(url: string): string {
+  if (!url) return "";
+  const trimmed = url.trim();
+  if (trimmed.length > MAX_URL) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return trimmed;
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+// ── Audit logging (console + DB) ──
+
+function auditLog(username: string, action: string, resourceId: number | null, detail: string): void {
+  const timestamp = new Date().toISOString();
+  console.log(`[AUDIT] ${timestamp} ${username} ${action} ${resourceId ?? "-"} ${detail}`);
+  logAudit(username, action, resourceId, detail);
+}
+
+// ── Handlers ──
+
 function stripCtrl(s: string): string {
   return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 }
 
 export function listPasswordsJson(ctx: RequestContext): Response {
+  const rateCheck = checkCrudRateLimit(ctx, 60);
+  if (!rateCheck.allowed) {
+    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    });
+  }
+
   const entries = listPasswordsForGroups(ctx.userGroups);
-  const decrypted = entries.map((e) => ({
+  const result = entries.map((e) => ({
     id: e.id,
     title: e.title,
     username: e.username,
     url: e.url,
     group_cn: e.group_cn,
-    password: decrypt({ data: e.enc_password, iv: e.enc_iv, tag: e.enc_tag }),
+    encrypted: e.enc_password,
+    iv: e.enc_iv,
+    tag: e.enc_tag,
     created_at: e.created_at,
+    updated_at: e.updated_at,
   }));
-  return new Response(JSON.stringify(decrypted), {
+
+  auditLog(ctx.username, "PASSWORD_LIST", null, `Listed ${result.length} passwords`);
+
+  return new Response(JSON.stringify(result), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export function decryptPasswordJson(ctx: RequestContext): Response {
+  const rateCheck = checkCrudRateLimit(ctx, 60);
+  if (!rateCheck.allowed) {
+    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    });
+  }
+
+  const id = Number(ctx.params.id);
+  if (Number.isNaN(id)) {
+    return new Response(JSON.stringify({ error: "Invalid ID" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const entry = getPasswordById(id);
+  if (!entry) {
+    return new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Group authorization: user must belong to the entry's group
+  if (!ctx.userGroups.includes(entry.group_cn)) {
+    return new Response(JSON.stringify({ error: "You do not have access to this entry" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const password = decrypt({ data: entry.enc_password, iv: entry.enc_iv, tag: entry.enc_tag }, String(entry.id));
+
+  auditLog(ctx.username, "PASSWORD_READ", id, `Decrypted password "${entry.title}" from group "${entry.group_cn}"`);
+
+  return new Response(JSON.stringify({ id: entry.id, password }), {
     headers: { "Content-Type": "application/json" },
   });
 }
 
 export async function createPasswordJson(ctx: RequestContext): Promise<Response> {
+  const rateCheck = checkCrudRateLimit(ctx, 20);
+  if (!rateCheck.allowed) {
+    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    });
+  }
+
   let body: any;
   try {
     body = await ctx.request.json();
@@ -82,20 +218,27 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
 
   const cleanedTitle = stripCtrl(title.trim());
   const cleanedUsername = stripCtrl(username.trim());
-  const cleanedUrl = stripCtrl((url || "").trim());
+  const cleanedUrl = sanitizeUrl(stripCtrl((url || "").trim()));
 
-  const encrypted = encrypt(password);
+  // Insert the entry first to obtain its autoincrement id, then encrypt with
+  // that id as AAD. AAD cryptographically binds the ciphertext to this record,
+  // preventing ciphertext reordering/swapping across entries.
   const entry = createPassword({
     title: cleanedTitle,
     username: cleanedUsername,
     url: cleanedUrl,
-    enc_password: encrypted.data,
-    enc_iv: encrypted.iv,
-    enc_tag: encrypted.tag,
+    enc_password: "",
+    enc_iv: "",
+    enc_tag: "",
     group_cn,
   });
 
-  logAudit(ctx.username, "create", entry.id, `Created password "${cleanedTitle}" in group "${group_cn}"`);
+  const encrypted = encrypt(password, String(entry.id));
+  getDb()
+    .query("UPDATE passwords SET enc_password = ?, enc_iv = ?, enc_tag = ? WHERE id = ?")
+    .run(encrypted.data, encrypted.iv, encrypted.tag, entry.id);
+
+  auditLog(ctx.username, "PASSWORD_CREATE", entry.id, `Created password "${cleanedTitle}" in group "${group_cn}"`);
 
   return new Response(JSON.stringify({ id: entry.id, title: entry.title, group_cn: entry.group_cn }), {
     status: 201,
@@ -104,6 +247,14 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
 }
 
 export function deletePasswordJson(ctx: RequestContext): Response {
+  const rateCheck = checkCrudRateLimit(ctx, 20);
+  if (!rateCheck.allowed) {
+    return new Response(JSON.stringify({ error: "Too many requests. Try again later." }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": String(rateCheck.retryAfter) },
+    });
+  }
+
   const id = Number(ctx.params.id);
   if (Number.isNaN(id)) {
     return new Response(JSON.stringify({ error: "Invalid ID" }), {
@@ -130,7 +281,7 @@ export function deletePasswordJson(ctx: RequestContext): Response {
 
   deletePassword(id);
 
-  logAudit(ctx.username, "delete", id, `Deleted password "${entry.title}" from group "${entry.group_cn}"`);
+  auditLog(ctx.username, "PASSWORD_DELETE", id, `Deleted password "${entry.title}" from group "${entry.group_cn}"`);
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: { "Content-Type": "application/json" },

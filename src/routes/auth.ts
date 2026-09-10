@@ -15,6 +15,10 @@ function escapeAttr(s: string): string {
     .replace(/'/g, "\x26#39;");
 }
 
+const RATE_LIMIT_MAX = 5; // max attempts per window
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute window
+const RATE_LIMIT_CLEANUP_MS = 60_000; // prune expired entries every 60 seconds
+
 // Simple in-memory rate limiter for login attempts
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
@@ -22,24 +26,36 @@ function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const record = loginAttempts.get(ip);
   if (!record || record.resetAt < now) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + 60_000 });
+    loginAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return true;
   }
-  if (record.count >= 5) {
+  if (record.count >= RATE_LIMIT_MAX) {
     return false;
   }
   record.count++;
   return true;
 }
 
-function getClientIP(request: Request): string {
-  // Prefer the first proxy-trusted header, then X-Forwarded-For
-  const realIp = request.headers.get("X-Real-IP");
-  if (realIp) return realIp;
-  const cfIp = request.headers.get("CF-Connecting-IP");
-  if (cfIp) return cfIp;
-  const xff = request.headers.get("X-Forwarded-For");
-  if (xff) return xff.split(",")[0].trim();
+// Periodic cleanup of expired entries to prevent unbounded memory growth.
+// Prunes any entry whose window has fully elapsed.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of loginAttempts) {
+    if (record.resetAt < now) {
+      loginAttempts.delete(ip);
+    }
+  }
+}, RATE_LIMIT_CLEANUP_MS);
+
+// Rate-limit keyed on the socket-level client IP from Bun's native server.
+// Never trust client-supplied headers like X-Forwarded-For / X-Real-IP /
+// CF-Connecting-IP, as they can be spoofed to bypass the limiter.
+function getClientIP(ctx: RequestContext): string {
+  const server = ctx.server;
+  if (server) {
+    const addr = server.requestIP(ctx.request);
+    if (addr) return addr.address;
+  }
   return "unknown";
 }
 
@@ -90,7 +106,7 @@ export function getLoginPage(_ctx: RequestContext): Response {
 }
 
 export async function handleLogin(ctx: RequestContext): Promise<Response> {
-  const ip = getClientIP(ctx.request);
+  const ip = getClientIP(ctx);
   if (!checkRateLimit(ip)) {
     return new Response(JSON.stringify({ error: "Too many login attempts. Try again later." }), {
       status: 429,
@@ -98,8 +114,8 @@ export async function handleLogin(ctx: RequestContext): Promise<Response> {
     });
   }
 
-  // Lightweight delay to slow brute-force even within rate limit window
-  await new Promise((r) => setTimeout(r, 200 + Math.random() * 300));
+  // Delay to slow brute-force even within rate limit window
+  await new Promise((r) => setTimeout(r, 1000 + Math.random() * 1000));
 
   let body: { username?: string; password?: string };
   try {
@@ -133,7 +149,7 @@ export async function handleLogin(ctx: RequestContext): Promise<Response> {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Set-Cookie": `session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`,
+        "Set-Cookie": `session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure}`,
       },
     });
   } catch (err) {
@@ -159,7 +175,7 @@ export function handleLogout(ctx: RequestContext): Response {
     status: 302,
     headers: {
       Location: "/login",
-      "Set-Cookie": `session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`,
+      "Set-Cookie": `session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`,
     },
   });
 }

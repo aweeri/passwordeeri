@@ -185,8 +185,8 @@ export function logAudit(username: string, action: string, targetId: number | nu
     getDb()
       .query("INSERT INTO audit_log (username, action, target_id, detail) VALUES (?, ?, ?, ?)")
       .run(username, action, targetId, detail);
-  } catch {
+  } catch (err) {
     // audit logging should never break the app
-    console.error("Audit log write failed:", (Error as any).message);
+    console.error("Audit log write failed:", err);
   }
 }

@@ -6,4 +6,4 @@ config.env
 *.db-wal
 .env
 /plans
-$null
+test/config.env

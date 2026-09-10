@@ -54,7 +54,11 @@ function bind(client: any, dn: string, password: string): Promise<void> {
 
 function makeClient(): any {
   const cfg = getConfig();
-  return createClient({ url: cfg.LDAP_URL, reconnect: false });
+  return createClient({
+    url: cfg.LDAP_URL,
+    reconnect: false,
+    tlsOptions: { rejectUnauthorized: true },
+  });
 }
 
 /**
@@ -175,9 +179,11 @@ export async function getGroupsForUser(username: string): Promise<string[]> {
 }
 
 function escapeFilterValue(value: string): string {
-  // LDAP filter escaping for special chars: \ * ( ) NUL
-  return value.replace(/[\\*()\u0000]/g, (ch) => {
-    return "\\" + ch.charCodeAt(0).toString(16).padStart(2, "0");
+  // LDAP filter escaping — prefix every special character with \
+  // Special chars: \ * ( ) & | ! = ~ < > : and NUL (\00)
+  return value.replace(/[\\*()&|!=~<>:\u0000]/g, (ch) => {
+    if (ch === "\u0000") return "\\00";
+    return "\\" + ch;
   });
 }
 

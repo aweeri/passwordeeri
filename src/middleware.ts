@@ -6,6 +6,7 @@ import { deleteSession, refreshSessionGroups } from "./db";
 export interface RequestContext {
   request: Request;
   params: Record<string, string>;
+  server?: import("bun").Server;
   session?: SessionRow;
   userGroups: string[];
   username: string;
@@ -25,14 +26,17 @@ function getCookie(name: string, cookieHeader: string | null): string | null {
 }
 
 function isSameOrigin(request: Request): boolean {
-  const origin = request.headers.get("Origin");
   const host = request.headers.get("Host");
-  if (!origin) {
-    // Non-browser clients don't send Origin — allow through;
-    // CSRF relies on browsers sending Origin on cross-site requests.
-    return true;
-  }
   if (!host) return false;
+
+  // Use Origin when present; fall back to Referer (full URL) for clients that
+  // omit Origin on state-changing requests.
+  const origin = request.headers.get("Origin") || request.headers.get("Referer");
+  if (!origin) {
+    // Neither Origin nor Referer present — cannot verify the request is
+    // same-origin, so deny it.
+    return false;
+  }
   try {
     const originUrl = new URL(origin);
     return originUrl.host === host && (originUrl.protocol === "https:" || originUrl.protocol === "http:");
@@ -86,8 +90,11 @@ async function maybeRefresh(ctx: RequestContext): Promise<void> {
       refreshSessionGroups(token, freshGroups);
       ctx.userGroups = freshGroups;
     }
-  } catch {
-    // User no longer exists in LDAP — expire session
+  } catch (err) {
+    // Non-critical background refresh: this must never break the request.
+    // The typical failure is the user no longer existing in LDAP — in that
+    // case we expire their session. Log any error so it isn't silently swallowed.
+    console.error("Session refresh failed for user:", ctx.session?.username, err);
     const token = ctx.session?.token;
     if (token) {
       deleteSession(token);
@@ -120,7 +127,8 @@ export function requireSession(handler: Handler): Handler {
     ctx.userGroups = parseGroups(session);
     ctx.username = session.username;
 
-    // Fire-and-forget session freshness check (same as requireSessionJson)
+    // Non-critical background refresh (fire-and-forget) — must never block or
+    // break the request; failures are logged inside maybeRefresh.
     maybeRefresh(ctx);
 
     return handler(ctx);
@@ -151,7 +159,8 @@ export function requireSessionJson(handler: Handler): Handler {
     ctx.userGroups = parseGroups(session);
     ctx.username = session.username;
 
-    // Fire-and-forget session freshness check (non-blocking)
+    // Non-critical background refresh (fire-and-forget) — must never block or
+    // break the request; failures are logged inside maybeRefresh.
     maybeRefresh(ctx);
 
     return handler(ctx);

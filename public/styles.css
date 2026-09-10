@@ -122,11 +122,22 @@ a {
   color: var(--muted);
 }
 
+.logout-form {
+  margin: 0;
+  padding: 0;
+  display: inline;
+}
+
 .btn-logout {
   color: var(--accent);
   text-decoration: none;
   border: 1px solid var(--border);
   padding: 4px 10px;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .btn-logout:hover {
