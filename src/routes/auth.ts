@@ -82,6 +82,7 @@ export function getLoginPage(_ctx: RequestContext): Response {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${name}</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%232255aa%22%3E%3Cpath d=%22M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="${base}/fonts/material-icons.css">
 <link rel="stylesheet" href="${base}/styles.css">
 </head>
