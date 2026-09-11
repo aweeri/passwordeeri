@@ -186,7 +186,7 @@ router.get("/dashboard", requireSession(async (ctx) => {
       ...securityHeaders("text/html; charset=utf-8"),
       "Cache-Control": "no-cache, no-store",
       "Content-Security-Policy":
-        `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'strict-dynamic' 'nonce-${nonce}'; font-src 'self'; object-src 'none'; frame-ancestors 'none'`,
+        `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'strict-dynamic' 'nonce-${nonce}'; font-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'`,
     },
   });
 }));

@@ -109,7 +109,7 @@ export function getLoginPage(_ctx: RequestContext): Response {
   return new Response(html, {
     headers: injectSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-${nonce}'; font-src 'self'; object-src 'none'`,
+      "Content-Security-Policy": `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-${nonce}'; font-src 'self'; img-src 'self' data:; object-src 'none'`,
     }),
   });
 }
