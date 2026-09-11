@@ -3,10 +3,9 @@ import { loadConfig, getConfig } from "./config";
 import { jsonResponse } from "./response";
 
 const APP_NAME = () => getConfig().APP_NAME;
-import { getDb, getSession, getDistinctGroupNames } from "./db";
+import { getDb, getSession } from "./db";
 import { Router } from "./router";
 import { requireSession, requireSessionJson } from "./middleware";
-import { getAllGroupNames } from "./ldap";
 import { getLoginPage, handleLogin, handleLogout } from "./routes/auth";
 import { listPasswordsJson, createPasswordJson, deletePasswordJson, decryptPasswordJson, updatePasswordJson } from "./routes/passwords";
 
@@ -59,32 +58,30 @@ router.get("/dashboard", requireSession(async (ctx) => {
   // are allowed while everything else is blocked (script-src 'self' 'strict-dynamic')
   const nonce = randomBytes(16).toString("base64");
 
-  // Super users see all groups in the dropdown so they can create/edit in any
-  // group. Merge LDAP group names with existing DB groups for safety.
   // Group list for the dropdown.
-  // - Normal users: only their own groups (which are whitelisted — they passed LOGIN_GROUPS).
-  // - Super users: all whitelisted groups so they can create in any allowed group.
-  //   If no whitelist is set, they get all LDAP + DB groups.
-  // - When LOGIN_GROUPS is configured, the dropdown is limited to those groups.
+  // - Super users: only their superuser groups (from SUPER_GROUPS) + LOGIN_GROUPS
+  //   (deduplicated) so they can create in any allowed group.
+  // - Normal users: only their own groups, filtered by LOGIN_GROUPS if set.
+  // - When no LOGIN_GROUPS is set, everyone sees only their own groups.
   // - User's own groups are listed FIRST for default selection.
   const loginGroups = getConfig().LOGIN_GROUPS;
+  const superGroups = getConfig().SUPER_GROUPS;
   let availableGroups = ctx.userGroups;
 
-  if (ctx.isSuper) {
-    if (loginGroups.length > 0) {
-      // Own groups first (default selection), then remaining whitelisted groups
-      availableGroups = [...new Set([...ctx.userGroups, ...loginGroups])] as string[];
+  if (loginGroups.length > 0) {
+    if (ctx.isSuper) {
+      // Superusers see only their superuser groups + allowlist groups
+      const superUserGroups = ctx.userGroups.filter((g) =>
+        superGroups.some((sg) => sg.toLowerCase() === g.toLowerCase())
+      );
+      availableGroups = [...new Set([...superUserGroups, ...loginGroups])] as string[];
     } else {
-      const ldapGroups = await getAllGroupNames();
-      const dbGroups = getDistinctGroupNames();
-      const merged = [...new Set([...ctx.userGroups, ...ldapGroups, ...dbGroups])].filter(Boolean) as string[];
-      availableGroups = merged.length > 0 ? merged : ctx.userGroups;
+      // Non-super users: only their own whitelisted groups
+      const lowerWhitelist = loginGroups.map((g) => g.toLowerCase());
+      availableGroups = ctx.userGroups.filter((g) => lowerWhitelist.includes(g.toLowerCase()));
     }
-  } else if (loginGroups.length > 0) {
-    // Non-super users: only their own whitelisted groups
-    const lowerWhitelist = loginGroups.map((g) => g.toLowerCase());
-    availableGroups = ctx.userGroups.filter((g) => lowerWhitelist.includes(g.toLowerCase()));
   }
+  // When no LOGIN_GROUPS is set, both super and normal users see only their own groups.
 
   // Inject groups as JSON for the external script
   const groupsJson = JSON.stringify(availableGroups)
@@ -139,6 +136,11 @@ router.get("/dashboard", requireSession(async (ctx) => {
           <input type="text" id="f-url" placeholder="https://example.com" autocomplete="off">
         </div>
         <div class="field-group">
+          <label>Notes <span class="hint">(optional, max 500 chars)</span></label>
+          <textarea id="f-notes" class="notes-input" placeholder="Brief notes&hellip;" maxlength="500" rows="2"></textarea>
+          <span class="char-count" id="f-notes-count">0 / 500</span>
+        </div>
+        <div class="field-group">
           <label>Group</label>
           <select id="f-group"></select>
         </div>
@@ -164,6 +166,7 @@ router.get("/dashboard", requireSession(async (ctx) => {
           <th>Title</th>
           <th>Username</th>
           <th>URL</th>
+          <th>Notes</th>
           <th>Group</th>
           <th>Actions</th>
         </tr>

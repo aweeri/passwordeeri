@@ -578,17 +578,267 @@ td.url-cell {
   border-color: transparent;
 }
 
-@media (max-width: 600px) {
-  .form-row {
-    flex-direction: column;
+/* Notes field */
+.notes-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 2.4em;
+}
+
+.notes-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.td-notes {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-text {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.td-notes-edit {
+  vertical-align: top;
+}
+
+.edit-notes {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 2.4em;
+  box-sizing: border-box;
+}
+
+.edit-notes:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.char-count {
+  display: block;
+  font-size: 11px;
+  color: #999999;
+  text-align: right;
+  margin-top: 2px;
+}
+
+/* ── Responsive: tablet & mobile ── */
+
+@media (max-width: 768px) {
+  /* Container */
+  .container {
+    padding: 0 12px;
+    margin: 16px auto;
   }
-  .form-row input,
-  .form-row select,
-  .form-row button {
-    width: 100%;
-    flex: 1 1 100%;
-  }
+
+  /* Topbar — compact single-line layout */
   .topbar {
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+  .topbar .app-name {
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .topbar .user-info {
+    margin-left: auto;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40%;
+    order: 0;
+    width: auto;
+  }
+  .btn-logout {
+    padding: 4px 8px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  /* Search */
+  .search-wrapper {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  /* Add form fields — single column */
+  .add-form-fields {
+    grid-template-columns: 1fr;
+  }
+
+  /* ── Card-based table layout ── */
+  table, thead, tbody, tr, th, td {
+    display: block;
+  }
+
+  thead {
+    display: none;
+  }
+
+  #pw-table {
+    border: none;
+  }
+
+  #pw-table tbody tr {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: #ffffff;
+    position: relative;
+  }
+
+  #pw-table tbody tr:nth-child(even) {
+    background: #ffffff;
+  }
+
+  #pw-table tbody tr:last-child td {
+    border-bottom: 1px solid var(--border);
+  }
+
+  #pw-table tbody td {
+    border: none;
+    padding: 4px 0;
+    font-size: 13px;
+    text-align: left;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  /* Label each field via data-field attribute */
+  #pw-table tbody td::before {
+    content: attr(data-field);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    min-width: 70px;
+    flex-shrink: 0;
+  }
+
+  /* Notes cell in card layout */
+  .td-notes {
+    max-width: none;
+    white-space: normal;
+  }
+
+  /* Actions cell — no label, full-width buttons */
+  #pw-table tbody td.actions-cell {
+    display: flex;
     flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 8px;
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  #pw-table tbody td.actions-cell::before {
+    display: none;
+  }
+
+  /* Make action buttons full-width on very small screens */
+  .btn-copy,
+  .btn-edit,
+  .btn-save,
+  .btn-cancel-edit,
+  .btn-del-inline {
+    flex: 1;
+    justify-content: center;
+    min-height: 36px;
+    margin-right: 0;
+  }
+
+  /* Edit mode inputs in card layout */
+  .edit-title,
+  .edit-username,
+  .edit-url,
+  .edit-notes,
+  .edit-group {
+    width: 100%;
+  }
+
+  /* Edit mode: each input cell stacks label + input */
+  #pw-table tbody td input,
+  #pw-table tbody td select,
+  #pw-table tbody td textarea {
+    width: 100%;
+  }
+
+  /* Toggle button */
+  .btn-toggle {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Add form button */
+  .btn-add-form {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 13px;
+  }
+
+  .container {
+    padding: 0 8px;
+    margin: 12px auto;
+  }
+
+  .topbar {
+    padding: 4px 8px;
+    gap: 4px;
+  }
+
+  .topbar .app-name {
+    font-size: 13px;
+  }
+
+  .topbar .user-info {
+    font-size: 11px;
+    max-width: 35%;
+  }
+
+  .btn-logout {
+    padding: 3px 6px;
+    font-size: 11px;
+  }
+
+  #pw-table tbody tr {
+    padding: 10px;
+  }
+
+  #pw-table tbody td {
+    font-size: 12px;
+  }
+
+  .btn-copy,
+  .btn-edit,
+  .btn-save,
+  .btn-cancel-edit,
+  .btn-del-inline {
+    font-size: 11px;
+    padding: 6px 8px;
+    min-height: 32px;
   }
 }

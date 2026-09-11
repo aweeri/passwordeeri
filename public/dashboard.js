@@ -41,13 +41,6 @@
       .replace(/'/g, "\x26#39;");
   }
 
-  // Client-side URL safety check (defence-in-depth; server also sanitizes).
-  function isSafeUrl(url) {
-    if (!url) return true;
-    const u = url.trim().toLowerCase();
-    return u.startsWith("http://") || u.startsWith("https://");
-  }
-
   async function fetchDecrypted(entryId) {
     if (passwordMap.has(entryId)) return passwordMap.get(entryId);
     const res = await fetch(url("/api/passwords/" + entryId + "/decrypt"));
@@ -76,18 +69,13 @@
   }
 
   function renderRowView(tr, entry) {
-    var urlCell;
-    if (entry.url && isSafeUrl(entry.url)) {
-      urlCell = '<a href="' + escapeHtml(entry.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(entry.url) + '</a>';
-    } else if (entry.url) {
-      urlCell = '<span class="unsafe-url">' + escapeHtml(entry.url) + '</span>';
-    } else {
-      urlCell = "";
-    }
+    var urlCell = entry.url ? '<a href="' + escapeHtml(entry.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(entry.url) + '</a>' : "";
+    var notesHtml = entry.notes ? '<span class="notes-text" title="' + escapeHtml(entry.notes) + '">' + escapeHtml(truncate(entry.notes, 60)) + '</span>' : '';
     tr.innerHTML =
       '<td class="td-title" data-field="title">' + escapeHtml(entry.title) + '</td>' +
       '<td class="td-username" data-field="username">' + escapeHtml(entry.username) + '</td>' +
       '<td class="url-cell td-url" data-field="url">' + urlCell + '</td>' +
+      '<td class="td-notes" data-field="notes">' + notesHtml + '</td>' +
       '<td class="td-group" data-field="group_cn">' + escapeHtml(entry.group_cn) + '</td>' +
       '<td class="actions-cell">' +
         '<button class="btn-copy" data-id="' + entry.id + '" title="Copy password"><span class="material-icons md-18">content_copy</span> Copy</button>' +
@@ -98,11 +86,18 @@
     bindRowActions(tr, entry);
   }
 
+  function truncate(s, maxLen) {
+    if (s.length <= maxLen) return s;
+    return s.substring(0, maxLen) + '…';
+  }
+
   function renderEditForm(tr, entry) {
     var title = tr.querySelector('.td-title')?.textContent || entry.title;
     var username = tr.querySelector('.td-username')?.textContent || entry.username;
     var urlEl = tr.querySelector('.td-url');
     var editUrl = urlEl ? (urlEl.querySelector('a')?.textContent || urlEl.textContent || entry.url || '') : (entry.url || '');
+    var notesEl = tr.querySelector('.td-notes');
+    var editNotes = notesEl ? (notesEl.querySelector('.notes-text')?.textContent || notesEl.textContent || entry.notes || '') : (entry.notes || '');
     var groupEl = tr.querySelector('.td-group');
     var group_cn = groupEl?.textContent || entry.group_cn;
 
@@ -110,6 +105,7 @@
       '<td><input type="text" class="edit-title" value="' + escapeHtml(title) + '" placeholder="Title" autocomplete="off"></td>' +
       '<td><input type="text" class="edit-username" value="' + escapeHtml(username) + '" placeholder="Username" autocomplete="off"></td>' +
       '<td><input type="text" class="edit-url" value="' + escapeHtml(editUrl) + '" placeholder="URL" autocomplete="off"></td>' +
+      '<td class="td-notes-edit"><textarea class="edit-notes" placeholder="Brief notes&hellip;" maxlength="500" rows="2">' + escapeHtml(editNotes) + '</textarea><span class="char-count" id="edit-notes-count-' + entry.id + '">' + editNotes.length + ' / 500</span></td>' +
       '<td><select class="edit-group">' + groupOptionsHtml(group_cn) + '</select></td>' +
       '<td class="actions-cell">' +
         '<button class="btn-save" data-id="' + entry.id + '"><span class="material-icons md-18">save</span> Save</button>' +
@@ -122,17 +118,27 @@
     var cancelBtn = tr.querySelector(".btn-cancel-edit");
     var delBtn = tr.querySelector(".btn-del-inline");
 
+    // Character counter for edit notes
+    var editNotesField = tr.querySelector(".edit-notes");
+    if (editNotesField) {
+      editNotesField.addEventListener("input", function () {
+        var countEl = document.getElementById("edit-notes-count-" + entry.id);
+        if (countEl) countEl.textContent = this.value.length + " / 500";
+      });
+    }
+
     saveBtn.addEventListener("click", async function () {
       var newTitle = tr.querySelector(".edit-title").value.trim();
       var newUsername = tr.querySelector(".edit-username").value.trim();
       var newUrl = tr.querySelector(".edit-url").value.trim();
+      var newNotes = tr.querySelector(".edit-notes")?.value.trim() || "";
       var newGroup = tr.querySelector(".edit-group").value;
       if (!newTitle || !newUsername) { alert("Title and username are required"); return; }
 
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span class="material-icons md-18">sync</span>';
 
-      var payload = { title: newTitle, username: newUsername, url: newUrl, group_cn: newGroup };
+      var payload = { title: newTitle, username: newUsername, url: newUrl, notes: newNotes, group_cn: newGroup };
       try {
         var res = await fetch(url("/api/passwords/" + entry.id), {
           method: "PUT",
@@ -143,6 +149,7 @@
           entry.title = newTitle;
           entry.username = newUsername;
           entry.url = newUrl;
+          entry.notes = newNotes;
           entry.group_cn = newGroup;
           renderRowView(tr, entry);
         } else {
@@ -214,7 +221,8 @@
     return (
       (entry.title || "").toLowerCase().indexOf(q) !== -1 ||
       (entry.username || "").toLowerCase().indexOf(q) !== -1 ||
-      (entry.url || "").toLowerCase().indexOf(q) !== -1
+      (entry.url || "").toLowerCase().indexOf(q) !== -1 ||
+      (entry.notes || "").toLowerCase().indexOf(q) !== -1
     );
   }
 
@@ -274,7 +282,7 @@
 
   async function loadPasswords() {
     var res = await fetch(url("/api/passwords"));
-    if (!res.ok) { document.getElementById("pw-body").innerHTML = '<tr><td colspan="5">Failed to load</td></tr>'; return; }
+    if (!res.ok) { document.getElementById("pw-body").innerHTML = '<tr><td colspan="6">Failed to load</td></tr>'; return; }
     var data = await res.json();
     var ids = new Set(data.map(function (e) { return e.id; }));
     for (var id of [...passwordMap.keys()]) {
@@ -308,25 +316,38 @@
     var title = document.getElementById("f-title").value.trim();
     var username = document.getElementById("f-username").value.trim();
     var fUrl = document.getElementById("f-url").value.trim();
+    var fNotes = document.getElementById("f-notes")?.value.trim() || "";
     var password = document.getElementById("f-password").value.trim();
     var group_cn = document.getElementById("f-group").value;
     if (!title || !username || !password) { alert("Title, username, and password are required"); return; }
     var res = await fetch(url("/api/passwords"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title, username: username, url: fUrl, password: password, group_cn: group_cn }),
+      body: JSON.stringify({ title: title, username: username, url: fUrl, notes: fNotes, password: password, group_cn: group_cn }),
     });
     if (res.ok) {
       document.getElementById("f-title").value = "";
       document.getElementById("f-username").value = "";
       document.getElementById("f-url").value = "";
+      document.getElementById("f-notes").value = "";
       document.getElementById("f-password").value = "";
+      var countEl = document.getElementById("f-notes-count");
+      if (countEl) countEl.textContent = "0 / 500";
       loadPasswords();
     } else {
       var b = await res.json();
       alert(b.error || "Failed to add");
     }
   });
+
+  // --- Character counter for add form notes ---
+  var notesInput = document.getElementById("f-notes");
+  var notesCount = document.getElementById("f-notes-count");
+  if (notesInput && notesCount) {
+    notesInput.addEventListener("input", function () {
+      notesCount.textContent = this.value.length + " / 500";
+    });
+  }
 
   // Init search bar
   initSearch();

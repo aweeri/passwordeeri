@@ -9,6 +9,7 @@ export interface PasswordEntry {
   title: string;
   username: string;
   url: string;
+  notes: string;
   enc_password: string;
   enc_iv: string;
   enc_tag: string;
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS passwords (
     title       TEXT NOT NULL,
     username    TEXT NOT NULL,
     url         TEXT DEFAULT '',
+    notes       TEXT DEFAULT '',
     enc_password TEXT NOT NULL,
     enc_iv      TEXT NOT NULL,
     enc_tag     TEXT NOT NULL,
@@ -71,6 +73,18 @@ CREATE INDEX IF NOT EXISTS idx_passwords_group ON passwords(group_cn);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 `;
 
+// Idempotent migration for existing databases — adds the notes column if it
+// doesn't already exist. This ensures a clean upgrade path without breaking
+// existing installations.
+function runMigrations(): void {
+  const db = getDb();
+  try {
+    db.exec("ALTER TABLE passwords ADD COLUMN notes TEXT DEFAULT ''");
+  } catch {
+    // Column already exists — ignore.
+  }
+}
+
 let db: Database | null = null;
 
 export function getDb(): Database {
@@ -83,6 +97,7 @@ export function getDb(): Database {
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(MIGRATIONS);
+  runMigrations();
   return db;
 }
 
@@ -128,6 +143,7 @@ export function createPassword(data: {
   title: string;
   username: string;
   url: string;
+  notes: string;
   enc_password: string;
   enc_iv: string;
   enc_tag: string;
@@ -135,10 +151,10 @@ export function createPassword(data: {
 }): PasswordEntry {
   const result = getDb()
     .query(
-      `INSERT INTO passwords (title, username, url, enc_password, enc_iv, enc_tag, group_cn)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO passwords (title, username, url, notes, enc_password, enc_iv, enc_tag, group_cn)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(data.title, data.username, data.url, data.enc_password, data.enc_iv, data.enc_tag, data.group_cn);
+    .run(data.title, data.username, data.url, data.notes, data.enc_password, data.enc_iv, data.enc_tag, data.group_cn);
   return getPasswordById(Number(result.lastInsertRowid))!;
 }
 
@@ -153,6 +169,7 @@ export function updatePassword(
     title: string;
     username: string;
     url: string;
+    notes: string;
     enc_password: string;
     enc_iv: string;
     enc_tag: string;
@@ -162,10 +179,10 @@ export function updatePassword(
   const result = getDb()
     .query(
       `UPDATE passwords
-       SET title = ?, username = ?, url = ?, enc_password = ?, enc_iv = ?, enc_tag = ?, group_cn = ?, updated_at = datetime('now')
+       SET title = ?, username = ?, url = ?, notes = ?, enc_password = ?, enc_iv = ?, enc_tag = ?, group_cn = ?, updated_at = datetime('now')
        WHERE id = ?`
     )
-    .run(data.title, data.username, data.url, data.enc_password, data.enc_iv, data.enc_tag, data.group_cn, id);
+    .run(data.title, data.username, data.url, data.notes, data.enc_password, data.enc_iv, data.enc_tag, data.group_cn, id);
   if (result.changes === 0) return null;
   return getPasswordById(id);
 }

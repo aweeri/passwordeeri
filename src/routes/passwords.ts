@@ -11,6 +11,7 @@ const MAX_TITLE = 200;
 const MAX_USERNAME = 200;
 const MAX_URL = 2000;
 const MAX_PASSWORD = 10000;
+const MAX_NOTES = 500;
 
 // ── Rate limiting for CRUD operations ──
 
@@ -56,23 +57,6 @@ setInterval(() => {
     }
   }
 }, CRUD_RATE_LIMIT_CLEANUP_MS);
-
-// ── URL sanitization ──
-
-function sanitizeUrl(url: string): string {
-  if (!url) return "";
-  const trimmed = url.trim();
-  if (trimmed.length > MAX_URL) return "";
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      return trimmed;
-    }
-    return "";
-  } catch {
-    return "";
-  }
-}
 
 // Enforce a cap on the request body before buffering/parsing it, so a huge
 // payload can't make the server spend unbounded time/memory on JSON.parse.
@@ -120,6 +104,7 @@ export function listPasswordsJson(ctx: RequestContext): Response {
     title: e.title,
     username: e.username,
     url: e.url,
+    notes: e.notes,
     group_cn: e.group_cn,
     encrypted: e.enc_password,
     iv: e.enc_iv,
@@ -181,7 +166,7 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
-  const { title, username, url, password, group_cn } = body;
+  const { title, username, url, password, group_cn, notes } = body;
   if (!title || !username || !password || !group_cn) {
     return jsonResponse({ error: "title, username, password, and group_cn are required" }, 400);
   }
@@ -199,6 +184,9 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
   if (password.length > MAX_PASSWORD) {
     return jsonResponse({ error: `password must be at most ${MAX_PASSWORD} characters` }, 400);
   }
+  if ((notes || "").length > MAX_NOTES) {
+    return jsonResponse({ error: `notes must be at most ${MAX_NOTES} characters` }, 400);
+  }
 
   // Group authorization: user must belong to the group they're creating for
   if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
@@ -207,7 +195,8 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
 
   const cleanedTitle = stripCtrl(title.trim());
   const cleanedUsername = stripCtrl(username.trim());
-  const cleanedUrl = sanitizeUrl(stripCtrl((url || "").trim()));
+  const cleanedUrl = stripCtrl((url || "").trim());
+  const cleanedNotes = stripCtrl((notes || "").trim());
 
   // Insert the entry first to obtain its autoincrement id, then encrypt with
   // that id as AAD. AAD cryptographically binds the ciphertext to this record,
@@ -216,6 +205,7 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
     title: cleanedTitle,
     username: cleanedUsername,
     url: cleanedUrl,
+    notes: cleanedNotes,
     enc_password: "",
     enc_iv: "",
     enc_tag: "",
@@ -295,7 +285,7 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
-  const { title, username, url, password, group_cn } = body;
+  const { title, username, url, password, group_cn, notes } = body;
   if (!title || !username || !group_cn) {
     return jsonResponse({ error: "title, username, and group_cn are required" }, 400);
   }
@@ -313,6 +303,9 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
   if (password && password.length > MAX_PASSWORD) {
     return jsonResponse({ error: `password must be at most ${MAX_PASSWORD} characters` }, 400);
   }
+  if ((notes || "").length > MAX_NOTES) {
+    return jsonResponse({ error: `notes must be at most ${MAX_NOTES} characters` }, 400);
+  }
 
   // Group authorization: super users can write to any group
   if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
@@ -321,7 +314,8 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
 
   const cleanedTitle = stripCtrl(title.trim());
   const cleanedUsername = stripCtrl(username.trim());
-  const cleanedUrl = sanitizeUrl(stripCtrl((url || "").trim()));
+  const cleanedUrl = stripCtrl((url || "").trim());
+  const cleanedNotes = stripCtrl((notes || "").trim());
 
   // If a new password is provided, re-encrypt with the existing entry id as AAD
   let encPassword = entry.enc_password;
@@ -338,6 +332,7 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
     title: cleanedTitle,
     username: cleanedUsername,
     url: cleanedUrl,
+    notes: cleanedNotes,
     enc_password: encPassword,
     enc_iv: encIv,
     enc_tag: encTag,
