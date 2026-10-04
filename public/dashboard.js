@@ -19,18 +19,6 @@
   // Populated ONLY when the user explicitly requests decryption of an entry.
   const passwordMap = new Map();
 
-  // --- Populate the group dropdown ---
-  const sel = document.getElementById("f-group");
-  if (sel) {
-    groups.forEach((g, i) => {
-      const opt = document.createElement("option");
-      opt.value = g;
-      opt.textContent = g;
-      if (i === 0) opt.selected = true;
-      sel.appendChild(opt);
-    });
-  }
-
   function escapeHtml(s) {
     if (s === null || s === undefined) return "";
     return String(s)
@@ -53,13 +41,45 @@
     return data.password;
   }
 
-  // --- Build the group select options HTML for edit mode ---
-  function groupOptionsHtml(selected) {
-    return groups.map(function (g) {
-      var selAttr = g === selected ? ' selected' : '';
-      return '<option value="' + escapeHtml(g) + '"' + selAttr + '>' + escapeHtml(g) + '</option>';
-    }).join('');
+  // --- Reusable group picker (shared by add form and inline edit) ---
+  function createGroupPicker(selectEl, addBtn, chipsEl, initialGroups) {
+    const state = { groups: [...new Set(initialGroups || [])] };
+    function render() {
+      chipsEl.innerHTML = state.groups.map(g =>
+        '<span class="group-chip" title="' + escapeHtml(g) + '">' +
+          '<span class="chip-label">' + escapeHtml(g) + '</span>' +
+          '<button type="button" class="chip-remove" data-group="' + escapeHtml(g) + '" ' +
+            'title="Remove this group from the entry." ' +
+            'aria-label="Remove group ' + escapeHtml(g) + '">&times;</button>' +
+        '</span>').join('');
+      const remaining = groups.filter(g => !state.groups.includes(g));
+      selectEl.innerHTML = remaining.map(g =>
+        '<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>').join('')
+        || '<option value="" disabled>No groups left</option>';
+      addBtn.disabled = remaining.length === 0;
+      chipsEl.classList.toggle('is-empty', state.groups.length === 0);
+    }
+    addBtn.addEventListener('click', () => {
+      const g = selectEl.value;
+      if (g && !state.groups.includes(g)) { state.groups.push(g); render(); }
+    });
+    chipsEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.chip-remove');
+      if (!btn) return;
+      state.groups = state.groups.filter(g => g !== btn.dataset.group);
+      render();
+    });
+    render();
+    return { getGroups: () => [...state.groups] };
   }
+
+  // Add-form picker, created once from the server-injected group list.
+  var addSelectEl = document.getElementById("f-group-select");
+  var addGroupBtn = document.getElementById("f-group-add");
+  var addChipsEl = document.getElementById("f-group-chips");
+  var addPicker = (addSelectEl && addGroupBtn && addChipsEl)
+    ? createGroupPicker(addSelectEl, addGroupBtn, addChipsEl, [])
+    : null;
 
   function makeRow(entry) {
     var tr = document.createElement("tr");
@@ -69,20 +89,24 @@
   }
 
   function renderRowView(tr, entry) {
+    tr.classList.remove("editing");
     var urlCell = entry.url ? '<a href="' + escapeHtml(entry.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(entry.url) + '</a>' : "";
     var notesHtml = entry.notes ? '<span class="notes-text" title="' + escapeHtml(entry.notes) + '">' + escapeHtml(truncate(entry.notes, 60)) + '</span>' : '';
+    var gs = entry.groups || (entry.group_cn ? [entry.group_cn] : []);
+    var groupsHtml = gs.map(function (g) {
+      return '<span class="group-chip group-chip-readonly" title="' + escapeHtml(g) + '">' + escapeHtml(g) + '</span>';
+    }).join('');
     tr.innerHTML =
       '<td class="td-title" data-field="title">' + escapeHtml(entry.title) + '</td>' +
       '<td class="td-username" data-field="username">' + escapeHtml(entry.username) + '</td>' +
       '<td class="url-cell td-url" data-field="url">' + urlCell + '</td>' +
       '<td class="td-notes" data-field="notes">' + notesHtml + '</td>' +
-      '<td class="td-group" data-field="group_cn">' + escapeHtml(entry.group_cn) + '</td>' +
+      '<td class="td-groups" data-field="groups">' + groupsHtml + '</td>' +
       '<td class="actions-cell">' +
         '<button class="btn-copy" data-id="' + entry.id + '" title="Copy password"><span class="material-icons md-18">content_copy</span> Copy</button>' +
         '<button class="btn-edit" data-id="' + entry.id + '" title="Edit entry"><span class="material-icons md-18">edit</span> Edit</button>' +
       '</td>';
 
-    // Bind actions on the view row
     bindRowActions(tr, entry);
   }
 
@@ -98,27 +122,40 @@
     var editUrl = urlEl ? (urlEl.querySelector('a')?.textContent || urlEl.textContent || entry.url || '') : (entry.url || '');
     var notesEl = tr.querySelector('.td-notes');
     var editNotes = notesEl ? (notesEl.querySelector('.notes-text')?.textContent || notesEl.textContent || entry.notes || '') : (entry.notes || '');
-    var groupEl = tr.querySelector('.td-group');
-    var group_cn = groupEl?.textContent || entry.group_cn;
+    var initialGroups = entry.groups || (entry.group_cn ? [entry.group_cn] : []);
 
+    tr.classList.add("editing");
     tr.innerHTML =
       '<td><input type="text" class="edit-title" value="' + escapeHtml(title) + '" placeholder="Title" autocomplete="off"></td>' +
       '<td><input type="text" class="edit-username" value="' + escapeHtml(username) + '" placeholder="Username" autocomplete="off"></td>' +
       '<td><input type="text" class="edit-url" value="' + escapeHtml(editUrl) + '" placeholder="URL" autocomplete="off"></td>' +
       '<td class="td-notes-edit"><textarea class="edit-notes" placeholder="Brief notes&hellip;" maxlength="500" rows="2">' + escapeHtml(editNotes) + '</textarea><span class="char-count" id="edit-notes-count-' + entry.id + '">' + editNotes.length + ' / 500</span></td>' +
-      '<td><select class="edit-group">' + groupOptionsHtml(group_cn) + '</select></td>' +
+      '<td class="td-groups-edit" data-field="groups">' +
+        '<div class="group-picker">' +
+          '<div class="group-picker-row">' +
+            '<select class="edit-group-select" title="Select a group to grant access, then click + to add it."></select>' +
+            '<button type="button" class="btn-group-add edit-group-add" title="Add the selected group to this entry\'s access list.">+</button>' +
+          '</div>' +
+          '<div class="edit-group-chips group-chips" aria-live="polite"></div>' +
+        '</div>' +
+      '</td>' +
       '<td class="actions-cell">' +
         '<button class="btn-save" data-id="' + entry.id + '"><span class="material-icons md-18">save</span> Save</button>' +
         '<button class="btn-cancel-edit" data-id="' + entry.id + '"><span class="material-icons md-18">close</span></button>' +
         '<button class="btn-del-inline" data-id="' + entry.id + '" title="Delete this entry permanently"><span class="material-icons md-18">delete_forever</span></button>' +
       '</td>';
 
-    // Bind edit mode actions
+    var editPicker = createGroupPicker(
+      tr.querySelector(".edit-group-select"),
+      tr.querySelector(".edit-group-add"),
+      tr.querySelector(".edit-group-chips"),
+      initialGroups
+    );
+
     var saveBtn = tr.querySelector(".btn-save");
     var cancelBtn = tr.querySelector(".btn-cancel-edit");
     var delBtn = tr.querySelector(".btn-del-inline");
 
-    // Character counter for edit notes
     var editNotesField = tr.querySelector(".edit-notes");
     if (editNotesField) {
       editNotesField.addEventListener("input", function () {
@@ -132,13 +169,14 @@
       var newUsername = tr.querySelector(".edit-username").value.trim();
       var newUrl = tr.querySelector(".edit-url").value.trim();
       var newNotes = tr.querySelector(".edit-notes")?.value.trim() || "";
-      var newGroup = tr.querySelector(".edit-group").value;
       if (!newTitle || !newUsername) { alert("Title and username are required"); return; }
+      var groupsArr = editPicker.getGroups();
+      if (groupsArr.length === 0) { alert("Add at least one group before saving."); return; }
 
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span class="material-icons md-18">sync</span>';
 
-      var payload = { title: newTitle, username: newUsername, url: newUrl, notes: newNotes, group_cn: newGroup };
+      var payload = { title: newTitle, username: newUsername, url: newUrl, notes: newNotes, groups: groupsArr };
       try {
         var res = await fetch(url("/api/passwords/" + entry.id), {
           method: "PUT",
@@ -150,7 +188,7 @@
           entry.username = newUsername;
           entry.url = newUrl;
           entry.notes = newNotes;
-          entry.group_cn = newGroup;
+          entry.groups = groupsArr;
           renderRowView(tr, entry);
         } else {
           var b = await res.json().catch(function () { return {}; });
@@ -218,11 +256,13 @@
   function matchesSearch(entry) {
     if (!searchQuery) return true;
     var q = searchQuery.toLowerCase();
+    var entryGroups = entry.groups || (entry.group_cn ? [entry.group_cn] : []);
     return (
       (entry.title || "").toLowerCase().indexOf(q) !== -1 ||
       (entry.username || "").toLowerCase().indexOf(q) !== -1 ||
       (entry.url || "").toLowerCase().indexOf(q) !== -1 ||
-      (entry.notes || "").toLowerCase().indexOf(q) !== -1
+      (entry.notes || "").toLowerCase().indexOf(q) !== -1 ||
+      entryGroups.some(function (g) { return g.toLowerCase().indexOf(q) !== -1; })
     );
   }
 
@@ -318,12 +358,13 @@
     var fUrl = document.getElementById("f-url").value.trim();
     var fNotes = document.getElementById("f-notes")?.value.trim() || "";
     var password = document.getElementById("f-password").value.trim();
-    var group_cn = document.getElementById("f-group").value;
     if (!title || !username || !password) { alert("Title, username, and password are required"); return; }
+    var groupsArr = addPicker ? addPicker.getGroups() : [];
+    if (groupsArr.length === 0) { alert("Add at least one group before saving."); return; }
     var res = await fetch(url("/api/passwords"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title, username: username, url: fUrl, notes: fNotes, password: password, group_cn: group_cn }),
+      body: JSON.stringify({ title: title, username: username, url: fUrl, notes: fNotes, password: password, groups: groupsArr }),
     });
     if (res.ok) {
       document.getElementById("f-title").value = "";

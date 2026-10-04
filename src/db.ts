@@ -18,6 +18,10 @@ export interface PasswordEntry {
   updated_at: string;
 }
 
+export interface PasswordWithGroups extends PasswordEntry {
+  groups: string[]; // from password_groups, ORDER BY group_cn
+}
+
 export interface SessionRow {
   token: string;
   username: string;
@@ -71,17 +75,31 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_passwords_group ON passwords(group_cn);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+CREATE TABLE IF NOT EXISTS password_groups (
+    password_id INTEGER NOT NULL,
+    group_cn    TEXT NOT NULL,
+    PRIMARY KEY (password_id, group_cn),
+    FOREIGN KEY (password_id) REFERENCES passwords(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_password_groups_group ON password_groups(group_cn);
 `;
 
-// Idempotent migration for existing databases — adds the notes column if it
-// doesn't already exist. This ensures a clean upgrade path without breaking
-// existing installations.
+// Idempotent upgrade: add the notes column to databases created before it existed.
 function runMigrations(): void {
   const db = getDb();
   try {
     db.exec("ALTER TABLE passwords ADD COLUMN notes TEXT DEFAULT ''");
   } catch {
-    // Column already exists — ignore.
+  }
+  try {
+    db.exec(`
+      INSERT OR IGNORE INTO password_groups (password_id, group_cn)
+      SELECT id, group_cn FROM passwords
+      WHERE group_cn IS NOT NULL AND group_cn <> ''
+    `);
+  } catch (err) {
+    console.error("password_groups backfill failed:", err);
   }
 }
 
@@ -116,27 +134,76 @@ export function isTokenValid(inputToken: string, storedToken: string): boolean {
 
 // ---- Passwords ----
 
-export function listPasswordsForGroups(groups: string[]): PasswordEntry[] {
-  if (groups.length === 0) return [];
-  const placeholders = groups.map(() => "?").join(", ");
-  return getDb()
-    .query(`SELECT * FROM passwords WHERE group_cn IN (${placeholders}) ORDER BY title`)
-    .all(...groups) as PasswordEntry[];
+export function getPasswordGroups(passwordId: number): string[] {
+  const rows = getDb()
+    .query("SELECT group_cn FROM password_groups WHERE password_id = ? ORDER BY group_cn")
+    .all(passwordId) as { group_cn: string }[];
+  return rows.map((r) => r.group_cn);
 }
 
-export function listAllPasswords(): PasswordEntry[] {
-  return getDb().query("SELECT * FROM passwords ORDER BY title").all() as PasswordEntry[];
+export function getPasswordGroupsBulk(passwordIds: number[]): Map<number, string[]> {
+  const map = new Map<number, string[]>();
+  if (passwordIds.length === 0) return map;
+  const placeholders = passwordIds.map(() => "?").join(", ");
+  const rows = getDb()
+    .query(
+      `SELECT password_id, group_cn FROM password_groups WHERE password_id IN (${placeholders}) ORDER BY group_cn`
+    )
+    .all(...passwordIds) as { password_id: number; group_cn: string }[];
+  for (const row of rows) {
+    const existing = map.get(row.password_id);
+    if (existing) existing.push(row.group_cn);
+    else map.set(row.password_id, [row.group_cn]);
+  }
+  return map;
+}
+
+export function setPasswordGroups(passwordId: number, groups: string[]): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.query("DELETE FROM password_groups WHERE password_id = ?").run(passwordId);
+    const insert = db.query("INSERT INTO password_groups (password_id, group_cn) VALUES (?, ?)");
+    for (const g of groups) insert.run(passwordId, g);
+  })();
+}
+
+function attachGroups(rows: PasswordEntry[]): PasswordWithGroups[] {
+  const groupMap = getPasswordGroupsBulk(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, groups: groupMap.get(r.id) ?? [] }));
+}
+
+export function listPasswordsForGroups(groups: string[]): PasswordWithGroups[] {
+  if (groups.length === 0) return [];
+  const placeholders = groups.map(() => "?").join(", ");
+  const rows = getDb()
+    .query(
+      `SELECT p.* FROM passwords p
+       WHERE EXISTS (
+         SELECT 1 FROM password_groups pg
+         WHERE pg.password_id = p.id AND pg.group_cn IN (${placeholders})
+       )
+       ORDER BY p.title`
+    )
+    .all(...groups) as PasswordEntry[];
+  return attachGroups(rows);
+}
+
+export function listAllPasswords(): PasswordWithGroups[] {
+  const rows = getDb().query("SELECT * FROM passwords ORDER BY title").all() as PasswordEntry[];
+  return attachGroups(rows);
 }
 
 export function getDistinctGroupNames(): string[] {
   const rows = getDb()
-    .query("SELECT DISTINCT group_cn FROM passwords ORDER BY group_cn")
+    .query("SELECT DISTINCT group_cn FROM password_groups ORDER BY group_cn")
     .all() as { group_cn: string }[];
   return rows.map((r) => r.group_cn).filter(Boolean);
 }
 
-export function getPasswordById(id: number): PasswordEntry | null {
-  return getDb().query("SELECT * FROM passwords WHERE id = ?").get(id) as PasswordEntry | null;
+export function getPasswordById(id: number): PasswordWithGroups | null {
+  const row = getDb().query("SELECT * FROM passwords WHERE id = ?").get(id) as PasswordEntry | null;
+  if (!row) return null;
+  return { ...row, groups: getPasswordGroups(row.id) };
 }
 
 export function createPassword(data: {
@@ -147,15 +214,22 @@ export function createPassword(data: {
   enc_password: string;
   enc_iv: string;
   enc_tag: string;
-  group_cn: string;
-}): PasswordEntry {
-  const result = getDb()
-    .query(
-      `INSERT INTO passwords (title, username, url, notes, enc_password, enc_iv, enc_tag, group_cn)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(data.title, data.username, data.url, data.notes, data.enc_password, data.enc_iv, data.enc_tag, data.group_cn);
-  return getPasswordById(Number(result.lastInsertRowid))!;
+  groups: string[];
+}): PasswordWithGroups {
+  const db = getDb();
+  const id = db.transaction(() => {
+    const result = db
+      .query(
+        `INSERT INTO passwords (title, username, url, notes, enc_password, enc_iv, enc_tag, group_cn)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(data.title, data.username, data.url, data.notes, data.enc_password, data.enc_iv, data.enc_tag, data.groups[0]);
+    const newId = Number(result.lastInsertRowid);
+    const insert = db.query("INSERT INTO password_groups (password_id, group_cn) VALUES (?, ?)");
+    for (const g of data.groups) insert.run(newId, g);
+    return newId;
+  })();
+  return getPasswordById(id)!;
 }
 
 export function deletePassword(id: number): boolean {
@@ -173,17 +247,25 @@ export function updatePassword(
     enc_password: string;
     enc_iv: string;
     enc_tag: string;
-    group_cn: string;
+    groups: string[];
   }
-): PasswordEntry | null {
-  const result = getDb()
-    .query(
-      `UPDATE passwords
-       SET title = ?, username = ?, url = ?, notes = ?, enc_password = ?, enc_iv = ?, enc_tag = ?, group_cn = ?, updated_at = datetime('now')
-       WHERE id = ?`
-    )
-    .run(data.title, data.username, data.url, data.notes, data.enc_password, data.enc_iv, data.enc_tag, data.group_cn, id);
-  if (result.changes === 0) return null;
+): PasswordWithGroups | null {
+  const db = getDb();
+  const changes = db.transaction(() => {
+    const result = db
+      .query(
+        `UPDATE passwords
+         SET title = ?, username = ?, url = ?, notes = ?, enc_password = ?, enc_iv = ?, enc_tag = ?, group_cn = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(data.title, data.username, data.url, data.notes, data.enc_password, data.enc_iv, data.enc_tag, data.groups[0], id);
+    if (result.changes === 0) return 0;
+    db.query("DELETE FROM password_groups WHERE password_id = ?").run(id);
+    const insert = db.query("INSERT INTO password_groups (password_id, group_cn) VALUES (?, ?)");
+    for (const g of data.groups) insert.run(id, g);
+    return result.changes;
+  })();
+  if (changes === 0) return null;
   return getPasswordById(id);
 }
 

@@ -52,8 +52,8 @@ Optionally: `APP_NAME` (branding), `BASE_PATH` (subpath), `COOKIE_SECURE` (HTTPS
 
 ## Access model
 
-- Every entry has a `group_cn`. You see it if you're in that group.
-- Create/delete works only for groups you belong to.
+- Every entry belongs to one or more groups. You see it if you're a member of any one of them (super users see everything).
+- Creating or updating an entry requires membership in every group you assign it to. Entries with no groups are visible only to super users.
 
 ## API
 
@@ -64,7 +64,7 @@ Optionally: `APP_NAME` (branding), `BASE_PATH` (subpath), `COOKIE_SECURE` (HTTPS
 | GET | `/logout` | - | kills session |
 | GET | `/dashboard` | session | the UI |
 | GET | `/api/passwords` | session | decrypted entries you can see |
-| POST | `/api/passwords` | session | `{title,username,url,password,group_cn}` |
+| POST | `/api/passwords` | session | `{title,username,url,password,groups}` |
 | DELETE | `/api/passwords/:id` | session | - |
 
 ## Security (reasonable, without being paranoid)

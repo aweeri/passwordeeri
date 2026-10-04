@@ -12,6 +12,8 @@ const MAX_USERNAME = 200;
 const MAX_URL = 2000;
 const MAX_PASSWORD = 10000;
 const MAX_NOTES = 500;
+const MAX_GROUPS = 50;
+const MAX_GROUP_NAME = 200;
 
 // ── Rate limiting for CRUD operations ──
 
@@ -90,6 +92,21 @@ function stripCtrl(s: string): string {
   return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 }
 
+function normalizeGroups(body: any): { groups: string[]; error?: string } {
+  let raw: unknown = body.groups;
+  if (!Array.isArray(raw) && typeof body.group_cn === "string") raw = [body.group_cn]; // legacy single-group clients
+  if (!Array.isArray(raw)) return { groups: [], error: "groups must be an array" };
+  const groups = [...new Set(raw.filter((g) => typeof g === "string").map((g) => g.trim()).filter(Boolean))];
+  if (groups.length === 0) return { groups, error: "At least one group is required" };
+  if (groups.length > MAX_GROUPS) return { groups, error: `At most ${MAX_GROUPS} groups are allowed` };
+  if (groups.some((g) => g.length > MAX_GROUP_NAME)) return { groups, error: `group names must be at most ${MAX_GROUP_NAME} characters` };
+  return { groups };
+}
+
+function hasAnyAccess(userGroups: string[], entryGroups: string[]): boolean {
+  return entryGroups.some((g) => userGroups.includes(g));
+}
+
 export function listPasswordsJson(ctx: RequestContext): Response {
   const rateCheck = checkCrudRateLimit(ctx, 60);
   if (!rateCheck.allowed) {
@@ -105,7 +122,8 @@ export function listPasswordsJson(ctx: RequestContext): Response {
     username: e.username,
     url: e.url,
     notes: e.notes,
-    group_cn: e.group_cn,
+    groups: e.groups,
+    group_cn: e.groups[0] ?? e.group_cn,
     encrypted: e.enc_password,
     iv: e.enc_iv,
     tag: e.enc_tag,
@@ -136,14 +154,13 @@ export function decryptPasswordJson(ctx: RequestContext): Response {
     return jsonResponse({ error: "Not found" }, 404);
   }
 
-  // Group authorization: super users can access any entry
-  if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
+  if (!ctx.isSuper && !hasAnyAccess(ctx.userGroups, entry.groups)) {
     return jsonResponse({ error: "You do not have access to this entry" }, 403);
   }
 
   const password = decrypt({ data: entry.enc_password, iv: entry.enc_iv, tag: entry.enc_tag }, String(entry.id));
 
-  auditLog(ctx.username, "PASSWORD_READ", id, `Decrypted password "${entry.title}" from group "${entry.group_cn}"`);
+  auditLog(ctx.username, "PASSWORD_READ", id, `Decrypted password "${entry.title}" from groups [${entry.groups.join(", ")}]`);
 
   return jsonResponse({ id: entry.id, password });
 }
@@ -166,12 +183,11 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
-  const { title, username, url, password, group_cn, notes } = body;
-  if (!title || !username || !password || !group_cn) {
-    return jsonResponse({ error: "title, username, password, and group_cn are required" }, 400);
+  const { title, username, url, password, notes } = body;
+  if (!title || !username || !password) {
+    return jsonResponse({ error: "title, username, and password are required" }, 400);
   }
 
-  // Server-side length validation
   if (title.length > MAX_TITLE) {
     return jsonResponse({ error: `title must be at most ${MAX_TITLE} characters` }, 400);
   }
@@ -188,9 +204,17 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
     return jsonResponse({ error: `notes must be at most ${MAX_NOTES} characters` }, 400);
   }
 
-  // Group authorization: user must belong to the group they're creating for
-  if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
-    return jsonResponse({ error: "You do not have access to this group" }, 403);
+  const { groups, error: groupsError } = normalizeGroups(body);
+  if (groupsError) {
+    return jsonResponse({ error: groupsError }, 400);
+  }
+
+  if (!ctx.isSuper) {
+    for (const g of groups) {
+      if (!ctx.userGroups.includes(g)) {
+        return jsonResponse({ error: 'You do not have access to group "' + g + '"' }, 403);
+      }
+    }
   }
 
   const cleanedTitle = stripCtrl(title.trim());
@@ -198,9 +222,7 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
   const cleanedUrl = stripCtrl((url || "").trim());
   const cleanedNotes = stripCtrl((notes || "").trim());
 
-  // Insert the entry first to obtain its autoincrement id, then encrypt with
-  // that id as AAD. AAD cryptographically binds the ciphertext to this record,
-  // preventing ciphertext reordering/swapping across entries.
+  // Insert first to get the autoincrement id, then encrypt with that id as AAD so ciphertext can't be swapped between records.
   const entry = createPassword({
     title: cleanedTitle,
     username: cleanedUsername,
@@ -209,7 +231,7 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
     enc_password: "",
     enc_iv: "",
     enc_tag: "",
-    group_cn,
+    groups,
   });
 
   const encrypted = encrypt(password, String(entry.id));
@@ -217,9 +239,9 @@ export async function createPasswordJson(ctx: RequestContext): Promise<Response>
     .query("UPDATE passwords SET enc_password = ?, enc_iv = ?, enc_tag = ? WHERE id = ?")
     .run(encrypted.data, encrypted.iv, encrypted.tag, entry.id);
 
-  auditLog(ctx.username, "PASSWORD_CREATE", entry.id, `Created password "${cleanedTitle}" in group "${group_cn}"`);
+  auditLog(ctx.username, "PASSWORD_CREATE", entry.id, `Created password "${cleanedTitle}" for groups [${groups.join(", ")}]`);
 
-  return jsonResponse({ id: entry.id, title: entry.title, group_cn: entry.group_cn }, 201);
+  return jsonResponse({ id: entry.id, title: entry.title, groups, group_cn: groups[0] }, 201);
 }
 
 export function deletePasswordJson(ctx: RequestContext): Response {
@@ -240,14 +262,13 @@ export function deletePasswordJson(ctx: RequestContext): Response {
     return jsonResponse({ error: "Not found" }, 404);
   }
 
-  // Group authorization: super users can delete any entry
-  if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
+  if (!ctx.isSuper && !hasAnyAccess(ctx.userGroups, entry.groups)) {
     return jsonResponse({ error: "You do not have access to this entry" }, 403);
   }
 
   deletePassword(id);
 
-  auditLog(ctx.username, "PASSWORD_DELETE", id, `Deleted password "${entry.title}" from group "${entry.group_cn}"`);
+  auditLog(ctx.username, "PASSWORD_DELETE", id, `Deleted password "${entry.title}" from groups [${entry.groups.join(", ")}]`);
 
   return jsonResponse({ ok: true });
 }
@@ -270,8 +291,7 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
     return jsonResponse({ error: "Not found" }, 404);
   }
 
-  // Group authorization: super users can update any entry
-  if (!ctx.isSuper && !ctx.userGroups.includes(entry.group_cn)) {
+  if (!ctx.isSuper && !hasAnyAccess(ctx.userGroups, entry.groups)) {
     return jsonResponse({ error: "You do not have access to this entry" }, 403);
   }
 
@@ -285,12 +305,11 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
-  const { title, username, url, password, group_cn, notes } = body;
-  if (!title || !username || !group_cn) {
-    return jsonResponse({ error: "title, username, and group_cn are required" }, 400);
+  const { title, username, url, password, notes } = body;
+  if (!title || !username) {
+    return jsonResponse({ error: "title and username are required" }, 400);
   }
 
-  // Server-side length validation
   if (title.length > MAX_TITLE) {
     return jsonResponse({ error: `title must be at most ${MAX_TITLE} characters` }, 400);
   }
@@ -307,9 +326,17 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
     return jsonResponse({ error: `notes must be at most ${MAX_NOTES} characters` }, 400);
   }
 
-  // Group authorization: super users can write to any group
-  if (!ctx.isSuper && !ctx.userGroups.includes(group_cn)) {
-    return jsonResponse({ error: "You do not have access to this group" }, 403);
+  const { groups, error: groupsError } = normalizeGroups(body);
+  if (groupsError) {
+    return jsonResponse({ error: groupsError }, 400);
+  }
+
+  if (!ctx.isSuper) {
+    for (const g of groups) {
+      if (!ctx.userGroups.includes(g)) {
+        return jsonResponse({ error: 'You do not have access to group "' + g + '"' }, 403);
+      }
+    }
   }
 
   const cleanedTitle = stripCtrl(title.trim());
@@ -336,14 +363,14 @@ export async function updatePasswordJson(ctx: RequestContext): Promise<Response>
     enc_password: encPassword,
     enc_iv: encIv,
     enc_tag: encTag,
-    group_cn,
+    groups,
   });
 
   if (!updated) {
     return jsonResponse({ error: "Update failed" }, 500);
   }
 
-  auditLog(ctx.username, "PASSWORD_UPDATE", id, `Updated password "${cleanedTitle}" in group "${group_cn}"`);
+  auditLog(ctx.username, "PASSWORD_UPDATE", id, `Updated password "${cleanedTitle}" for groups [${groups.join(", ")}]`);
 
-  return jsonResponse({ id: updated.id, title: updated.title, group_cn: updated.group_cn });
+  return jsonResponse({ id: updated.id, title: updated.title, groups, group_cn: groups[0] });
 }

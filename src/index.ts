@@ -141,10 +141,19 @@ router.get("/dashboard", requireSession(async (ctx) => {
           <textarea id="f-notes" class="notes-input" placeholder="Brief notes&hellip;" maxlength="500" rows="2"></textarea>
           <span class="char-count" id="f-notes-count">0 / 500</span>
         </div>
-        <div class="field-group">
-          <label>Group</label>
-          <select id="f-group"></select>
+        <div class="field-group group-picker" id="add-group-picker">
+          <label for="f-group-select">
+            Groups <span class="hint">(required &mdash; at least one)</span>
+            <span class="info-icon material-icons" title="This entry can be accessed by members of any of the groups listed here. At least one group is required.">help_outline</span>
+          </label>
+          <div class="group-picker-row">
+            <select id="f-group-select" title="Select a group to grant access, then click + to add it."></select>
+            <button type="button" id="f-group-add" class="btn-group-add" title="Add the selected group to this entry's access list.">+</button>
+          </div>
+          <div id="f-group-chips" class="group-chips" aria-live="polite"></div>
         </div>
+      </div>
+      <div class="add-form-actions">
         <button id="btn-add" class="btn-add-form"><span class="material-icons md-18">add_circle_outline</span> Add</button>
       </div>
     </div>
@@ -168,7 +177,7 @@ router.get("/dashboard", requireSession(async (ctx) => {
           <th>Username</th>
           <th>URL</th>
           <th>Notes</th>
-          <th>Group</th>
+          <th>Groups</th>
           <th>Actions</th>
         </tr>
       </thead>

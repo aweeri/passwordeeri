@@ -1,8 +1,4 @@
-/**
- * Mock LDAP server for local testing.
- * res.send() accepts a plain object { dn, attributes: { key: [values] } }
- * which the server internally converts via Attribute.fromObject().
- */
+// Mock LDAP server for local testing.
 
 import ldap from "ldapjs";
 
@@ -65,21 +61,18 @@ server.search("dc=test,dc=local", (req: any, res: any, next: any) => {
     return next();
   }
 
-  // Plain object format — server internally calls
-  //   Attribute.fromObject(entry.attributes)
-  // which expects a key → string | string[] map.
-  // Pass `true` (nofiltering) so ldapjs does NOT case-sensitively
-  // strip attributes the client requested (e.g. memberOf vs memberof).
-  res.send({
-    dn: user.dn,
-    attributes: {
-      objectclass: ["inetOrgPerson", "top"],
-      uid: username,
-      cn: username.charAt(0).toUpperCase() + username.slice(1),
-      sn: "User",
-      memberOf: user.groups,
-    },
-  }, true);
+  // createSearchEntry stamps the request messageId; plain-object send() lowercases keys and strips camelCase attrs like memberOf.
+  const entry = res.createSearchEntry({
+    objectName: user.dn,
+    attributes: [
+      new ldap.Attribute({ type: "objectclass", values: ["inetOrgPerson", "top"] }),
+      new ldap.Attribute({ type: "uid", values: [username] }),
+      new ldap.Attribute({ type: "cn", values: [username.charAt(0).toUpperCase() + username.slice(1)] }),
+      new ldap.Attribute({ type: "sn", values: ["User"] }),
+      new ldap.Attribute({ type: "memberOf", values: user.groups }),
+    ],
+  });
+  res.send(entry);
 
   res.end();
   return next();
